@@ -36,9 +36,12 @@ static void print_time(Task *task, int start_y, int start_x)
     erase();
     time_t current = time(NULL);
     time_t passed = current - task->interval.start;
-    struct tm *t = localtime(&passed);
+
+    int minutes = passed / 60;
+    int seconds = passed % 60;
+
     mvprintw(start_y - 1, start_x, "%s", task->name);
-    mvprintw(start_y, start_x, "%02d:%02d", t->tm_min, t->tm_sec);
+    mvprintw(start_y, start_x, "%02d:%02d", minutes, seconds);
     refresh();
 }
 
@@ -124,13 +127,18 @@ static void add_task(Task *tasks, int *total)
     strncpy(current->name, temp_name, name_max_length - 1);
     current->name[name_max_length - 1] = '\0';
    
-    time_t start_time = time(NULL);
-    current->interval.start = start_time;
+    current->interval.start = time(NULL);
     current->interval.end = 0;
     current->active = true;
     (*total)++;
 
     delwin(win);
+}
+
+static void finish_task(Task *task, int *total)
+{
+    task->active = false;
+    task->interval.end = time(NULL);
 }
 
 static void main_screen(Task *tasks, int tasks_total)
@@ -147,7 +155,7 @@ static void main_screen(Task *tasks, int tasks_total)
 
     while(1) {
         if(active){
-            print_time(&tasks[tasks_total], start_y, start_x);
+            print_time(&tasks[tasks_total - 1], start_y, start_x);
         }
         else
             mvprintw(start_y, start_x, "PRESS [s] TO BEGIN");
@@ -159,6 +167,12 @@ static void main_screen(Task *tasks, int tasks_total)
                 active = true;
                 break;
             case CMD_FINISH:
+                erase();
+                refresh();
+                tasks[tasks_total].active = false;
+                tasks[tasks_total].interval.end = time(NULL);
+                tasks_total--;
+                active = false;
                 break;
             case CMD_QUIT:
             case key_escape:
