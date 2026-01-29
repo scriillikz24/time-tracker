@@ -17,7 +17,9 @@ enum {
 enum {
     CMD_START = 's',
     CMD_FINISH = 'f',
-    CMD_QUIT = 'q'
+    CMD_QUIT = 'q',
+    CMD_CATEGORY = 'c',
+    CMD_CREATE = 'a'
 };
 
 typedef struct Category {
@@ -39,15 +41,26 @@ static void print_time(Interval *interval, Category *categories,  int start_y, i
     int minutes = passed / 60;
     int seconds = passed % 60;
 
-    mvprintw(start_y - 1, start_x, "%s", categories[interval->category_idx].name);
+    attron(COLOR_PAIR(3));
+    mvprintw(start_y - 2, start_x, "%s", categories[interval->category_idx].name);
+    attroff(COLOR_PAIR(3));
     mvprintw(start_y, start_x, "%02d:%02d", minutes, seconds);
     refresh();
 }
 
-static bool get_text_input(WINDOW *win, char *buffer, int max_len) {
-    werase(win);
-    wrefresh(win);
-    box(win, 0, 0);
+static bool get_text_input(char *buffer, int max_len) {
+    int rows, cols;
+    getmaxyx(stdscr, rows, cols);
+
+    int height = 3;
+    int width = name_max_length;
+    int start_y = (rows - height) / 2;
+    int start_x = (cols - width) / 2;
+
+    WINDOW *win = newwin(height, width, start_y, start_x);
+    keypad(win, TRUE);
+    
+    box(win, 0, 0); 
 
     int char_count = strlen(buffer);
     int ch;
@@ -83,43 +96,75 @@ static bool get_text_input(WINDOW *win, char *buffer, int max_len) {
         wrefresh(win);
     }
     curs_set(0);
+    werase(win);
+    wrefresh(win);
+    delwin(win);
     return true;
 }
 
-static void print_category_item(WINDOW *win, Category *category, int y, int x, bool highlighted) {
+static void print_category_item(Category *category, int y, int x, bool highlighted) {
     if(!highlighted) attron(COLOR_PAIR(3)); 
-    mvwprintw(win, y, x, "%s", category->name);
+    mvprintw(y, x, "> %s", category->name);
     if(!highlighted) attroff(COLOR_PAIR(3)); 
 }
 
-static int categories_dashboard(WINDOW *win, Category *categories, int *category_count)
+static void add_category(Category *categories, int *category_count)
 {
-    werase(win);
-    wrefresh(win);
+    clear();
+    refresh();
 
-    keypad(win, 1);
+    char temp_name[name_max_length] = {0};
+
+    do {
+        if(!get_text_input(temp_name, name_max_length)) {
+            return;
+        }
+    } while(strlen(temp_name) <= 0);
+    strncpy(categories[*category_count].name, temp_name, name_max_length - 1);
+    categories[*category_count].name[name_max_length - 1] = '\0';
+    (*category_count)++;
+}
+
+static int categories_dashboard(Category *categories, int *category_count, int y, int x)
+{
+    erase(); 
+    refresh();
+
     int highlight = 0;
+
     while(1) {
+        attron(A_BOLD);
+        mvprintw(y - 3, x, "THE CATEGORIES DASHBOARD");
+        attroff(A_BOLD);
+
+        if(*category_count == 0)
+            mvprintw(y, x, "> Press [a] to add a category.");
+
         for(int i = 0; i < *category_count; i++) {
-            print_category_item(win, &categories[i], 3, 1, i == highlight);
+            print_category_item(&categories[i], y + i, x, i == highlight);
         }
 
         int key;
-        key = wgetch(win);
+        key = getch();
         switch(key) {
-            case KEY_UP:
-                if(highlight < *category_count) highlight++;
+            case CMD_CREATE:
+                add_category(categories, category_count);
                 break;
-            case KEY_DOWN:
+            case KEY_UP:
                 if(highlight > 0) highlight--;
                 break;
+            case KEY_DOWN:
+                if(highlight < *category_count - 1) highlight++;
+                break;
             case key_enter:
+                clear();
+                refresh();
                 return highlight;
         }
     }
 }
 
-static void start_interval(Interval *intervals, int *interval_count, Category *categories, int *category_count)
+static bool start_interval(Interval *intervals, int *interval_count, Category *categories, int *category_count)
 {
     clear();
     refresh();
@@ -132,51 +177,37 @@ static void start_interval(Interval *intervals, int *interval_count, Category *c
     if(*interval_count >= max_intervals) {
         mvprintw(rows / 2, (cols - strlen(message)) / 2, "%s", message);
         getch();
-        return;
+        return false;
     }
 
-    int height = 4 + *category_count;
-    int width = name_max_length + 25;
-    int start_y = (rows - height) / 2;
-    int start_x = (cols - width) / 2;
+    int start_y = rows / 2;
+    int start_x = cols / 2;
 
     Interval *current = &intervals[*interval_count];
 
-    WINDOW *win = newwin(height, width, start_y, start_x);
-    keypad(win, TRUE);
-    
-    box(win, 0, 0); 
-    
-    char temp_name[name_max_length] = {0};
     if(*category_count == 0) {
-        mvwprintw(win, 1, 1, "Press [a] to create new category.");
-        if(wgetch(win) != 'a')
-            return;
-        do {
-            if(!get_text_input(win, temp_name, name_max_length)) {
-                delwin(0);
-                return;
-            }
-        } while(strlen(temp_name) <= 0);
-        strncpy(categories[current->category_idx].name, temp_name, name_max_length - 1);
-        categories[current->category_idx].name[name_max_length - 1] = '\0';
-        current->category_idx = *category_count;
-        (*category_count)++;
+        mvprintw(start_y, start_x, "Create a category first.");
+        timeout(-1);
+        getch(); 
+        timeout(default_timeout);
+        clear();
+        refresh();
+        return false; // Not success
     }
     else {
-        current->category_idx = categories_dashboard(win, categories, category_count);
+        current->category_idx = categories_dashboard(categories, category_count, start_y, start_x);
     }
    
     current->start = time(NULL);
     current->end = 0;
     (*interval_count)++;
-
-    delwin(win);
+    return true;
 }
 
 static void main_screen(Interval *intervals, int interval_count, Category *categories, int category_count)
 {
     timeout(default_timeout);
+
 
     int r, c;
     getmaxyx(stdscr, r, c);
@@ -186,18 +217,24 @@ static void main_screen(Interval *intervals, int interval_count, Category *categ
 
     bool active = false;
 
+    attron(A_BOLD);
+    mvprintw(start_y - 3, start_x, "THE MAIN SCREEN");
+    attroff(A_BOLD);
+
     while(1) {
         if(active){
             print_time(&intervals[interval_count - 1], categories, start_y, start_x);
         }
-        else
-            mvprintw(start_y, start_x, "PRESS [s] TO BEGIN");
+        else {
+            mvprintw(start_y, start_x, "> PRESS [s] TO START AN INTERVAL");
+            mvprintw(start_y + 1, start_x, "> PRESS [c] TO ENTER THE CATEGORY DASHBOARD");
+        }
 
         int key = getch();
         switch(key) {
             case CMD_START:
-                start_interval(intervals, &interval_count, categories, &category_count);
-                active = true;
+                if(start_interval(intervals, &interval_count, categories, &category_count))
+                    active = true;
                 break;
             case CMD_FINISH:
                 erase();
@@ -205,6 +242,9 @@ static void main_screen(Interval *intervals, int interval_count, Category *categ
                 intervals[interval_count].end = time(NULL);
                 interval_count--;
                 active = false;
+                break;
+            case CMD_CATEGORY:
+                categories_dashboard(categories, &category_count, start_y, start_x);
                 break;
             case CMD_QUIT:
             case key_escape:
