@@ -6,9 +6,8 @@
 
 enum {
     name_max_length = 30,
-    max_tasks = 10,
-    max_tags = 3,
-    max_intervals = 20,
+    max_categories = 5,
+    max_intervals = 1000,
     key_escape = 27,
     key_enter = 10,
     default_timeout = 1000
@@ -21,26 +20,21 @@ enum {
 };
 
 typedef struct Interval {
+    char category[name_max_length];
     time_t start;
     time_t end;
 } Interval;
 
-typedef struct Task {
-    char name[name_max_length];
-    Interval interval;
-    bool active;
-} Task;
-
-static void print_time(Task *task, int start_y, int start_x)
+static void print_time(Interval *interval, int start_y, int start_x)
 {
     erase();
     time_t current = time(NULL);
-    time_t passed = current - task->interval.start;
+    time_t passed = current - interval->start;
 
     int minutes = passed / 60;
     int seconds = passed % 60;
 
-    mvprintw(start_y - 1, start_x, "%s", task->name);
+    mvprintw(start_y - 1, start_x, "%s", interval->category);
     mvprintw(start_y, start_x, "%02d:%02d", minutes, seconds);
     refresh();
 }
@@ -83,16 +77,16 @@ static bool get_text_input(WINDOW *win, char *buffer, int max_len) {
     return true;
 }
 
-static void add_task(Task *tasks, int *total)
+static void start_interval(Interval *intervals, int *total)
 {
     clear();
     refresh();
 
     int rows, cols;
     getmaxyx(stdscr, rows, cols);
-    char message[60]; // Length of message below
-    snprintf(message, sizeof(message), "Cannot have more than %d tasks. Press any key to return.", max_tasks);
-    if(*total >= max_tasks) {
+    char message[100]; // Length of message below
+    snprintf(message, sizeof(message), "Cannot have more than %d intervals. Press any key to return.", max_intervals);
+    if(*total >= max_intervals) {
         mvprintw(rows / 2, (cols - strlen(message)) / 2, "%s", message);
         getch();
         return;
@@ -103,7 +97,7 @@ static void add_task(Task *tasks, int *total)
     int start_y = (rows - height) / 2;
     int start_x = (cols - width) / 2;
 
-    Task *current = &tasks[*total];
+    Interval *current = &intervals[*total];
 
     WINDOW *win = newwin(height, width, start_y, start_x);
     keypad(win, TRUE);
@@ -124,24 +118,17 @@ static void add_task(Task *tasks, int *total)
             return;
         }
     } while(strlen(temp_name) <= 0);
-    strncpy(current->name, temp_name, name_max_length - 1);
-    current->name[name_max_length - 1] = '\0';
+    strncpy(current->category, temp_name, name_max_length - 1);
+    current->category[name_max_length - 1] = '\0';
    
-    current->interval.start = time(NULL);
-    current->interval.end = 0;
-    current->active = true;
+    current->start = time(NULL);
+    current->end = 0;
     (*total)++;
 
     delwin(win);
 }
 
-static void finish_task(Task *task, int *total)
-{
-    task->active = false;
-    task->interval.end = time(NULL);
-}
-
-static void main_screen(Task *tasks, int tasks_total)
+static void main_screen(Interval *intervals, int intervals_total)
 {
     timeout(default_timeout);
 
@@ -155,7 +142,7 @@ static void main_screen(Task *tasks, int tasks_total)
 
     while(1) {
         if(active){
-            print_time(&tasks[tasks_total - 1], start_y, start_x);
+            print_time(&intervals[intervals_total - 1], start_y, start_x);
         }
         else
             mvprintw(start_y, start_x, "PRESS [s] TO BEGIN");
@@ -163,15 +150,14 @@ static void main_screen(Task *tasks, int tasks_total)
         int key = getch();
         switch(key) {
             case CMD_START:
-                add_task(tasks, &tasks_total);
+                start_interval(intervals, &intervals_total);
                 active = true;
                 break;
             case CMD_FINISH:
                 erase();
                 refresh();
-                tasks[tasks_total].active = false;
-                tasks[tasks_total].interval.end = time(NULL);
-                tasks_total--;
+                intervals[intervals_total].end = time(NULL);
+                intervals_total--;
                 active = false;
                 break;
             case CMD_QUIT:
@@ -189,10 +175,10 @@ int main() {
     keypad(stdscr, 1);
     curs_set(0);
 
-    int total = 0;
-    Task my_tasks[max_tasks];
+    int intervals_total = 0;
+    Interval my_intervals[max_intervals];
 
-    main_screen(my_tasks, total);
+    main_screen(my_intervals, intervals_total);
 
     endwin();
     return 0;
