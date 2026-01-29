@@ -10,7 +10,8 @@ enum {
     max_intervals = 1000,
     key_escape = 27,
     key_enter = 10,
-    default_timeout = 1000
+    default_timeout = 1000,
+    colors_max = 256,
 };
 
 enum {
@@ -19,13 +20,17 @@ enum {
     CMD_QUIT = 'q'
 };
 
+typedef struct Category {
+    char name[name_max_length];
+} Category;
+
 typedef struct Interval {
-    char category[name_max_length];
+    int category_idx; // Index into the categories array
     time_t start;
     time_t end;
 } Interval;
 
-static void print_time(Interval *interval, int start_y, int start_x)
+static void print_time(Interval *interval, Category *categories,  int start_y, int start_x)
 {
     erase();
     time_t current = time(NULL);
@@ -34,12 +39,16 @@ static void print_time(Interval *interval, int start_y, int start_x)
     int minutes = passed / 60;
     int seconds = passed % 60;
 
-    mvprintw(start_y - 1, start_x, "%s", interval->category);
+    mvprintw(start_y - 1, start_x, "%s", categories[interval->category_idx].name);
     mvprintw(start_y, start_x, "%02d:%02d", minutes, seconds);
     refresh();
 }
 
 static bool get_text_input(WINDOW *win, char *buffer, int max_len) {
+    werase(win);
+    wrefresh(win);
+    box(win, 0, 0);
+
     int char_count = strlen(buffer);
     int ch;
     curs_set(1);
@@ -77,58 +86,95 @@ static bool get_text_input(WINDOW *win, char *buffer, int max_len) {
     return true;
 }
 
-static void start_interval(Interval *intervals, int *total)
+static void print_category_item(WINDOW *win, Category *category, int y, int x, bool highlighted) {
+    if(!highlighted) attron(COLOR_PAIR(3)); 
+    mvwprintw(win, y, x, "%s", category->name);
+    if(!highlighted) attroff(COLOR_PAIR(3)); 
+}
+
+static int categories_dashboard(WINDOW *win, Category *categories, int *category_count)
+{
+    werase(win);
+    wrefresh(win);
+
+    keypad(win, 1);
+    int highlight = 0;
+    while(1) {
+        for(int i = 0; i < *category_count; i++) {
+            print_category_item(win, &categories[i], 3, 1, i == highlight);
+        }
+
+        int key;
+        key = wgetch(win);
+        switch(key) {
+            case KEY_UP:
+                if(highlight < *category_count) highlight++;
+                break;
+            case KEY_DOWN:
+                if(highlight > 0) highlight--;
+                break;
+            case key_enter:
+                return highlight;
+        }
+    }
+}
+
+static void start_interval(Interval *intervals, int *interval_count, Category *categories, int *category_count)
 {
     clear();
     refresh();
 
     int rows, cols;
     getmaxyx(stdscr, rows, cols);
+
     char message[100]; // Length of message below
     snprintf(message, sizeof(message), "Cannot have more than %d intervals. Press any key to return.", max_intervals);
-    if(*total >= max_intervals) {
+    if(*interval_count >= max_intervals) {
         mvprintw(rows / 2, (cols - strlen(message)) / 2, "%s", message);
         getch();
         return;
     }
 
-    int height = 3;
-    int width = name_max_length + 25; // 25 chars for query text & <-Esc
+    int height = 4 + *category_count;
+    int width = name_max_length + 25;
     int start_y = (rows - height) / 2;
     int start_x = (cols - width) / 2;
 
-    Interval *current = &intervals[*total];
+    Interval *current = &intervals[*interval_count];
 
     WINDOW *win = newwin(height, width, start_y, start_x);
     keypad(win, TRUE);
     
     box(win, 0, 0); 
-
-//    int attr;
-//    dimmed_attr(&attr);
-//    wattron(win, attr); 
-//    mvwprintw(win, 1, width - esc_hint_length - 1, ESC_HINT);
-//    wattroff(win, attron(attr)); 
-
-    char temp_name[name_max_length] = {0};
     
-    do {
-        if(!get_text_input(win, temp_name, name_max_length)) {
-            delwin(0);
+    char temp_name[name_max_length] = {0};
+    if(*category_count == 0) {
+        mvwprintw(win, 1, 1, "Press [a] to create new category.");
+        if(wgetch(win) != 'a')
             return;
-        }
-    } while(strlen(temp_name) <= 0);
-    strncpy(current->category, temp_name, name_max_length - 1);
-    current->category[name_max_length - 1] = '\0';
+        do {
+            if(!get_text_input(win, temp_name, name_max_length)) {
+                delwin(0);
+                return;
+            }
+        } while(strlen(temp_name) <= 0);
+        strncpy(categories[current->category_idx].name, temp_name, name_max_length - 1);
+        categories[current->category_idx].name[name_max_length - 1] = '\0';
+        current->category_idx = *category_count;
+        (*category_count)++;
+    }
+    else {
+        current->category_idx = categories_dashboard(win, categories, category_count);
+    }
    
     current->start = time(NULL);
     current->end = 0;
-    (*total)++;
+    (*interval_count)++;
 
     delwin(win);
 }
 
-static void main_screen(Interval *intervals, int intervals_total)
+static void main_screen(Interval *intervals, int interval_count, Category *categories, int category_count)
 {
     timeout(default_timeout);
 
@@ -142,7 +188,7 @@ static void main_screen(Interval *intervals, int intervals_total)
 
     while(1) {
         if(active){
-            print_time(&intervals[intervals_total - 1], start_y, start_x);
+            print_time(&intervals[interval_count - 1], categories, start_y, start_x);
         }
         else
             mvprintw(start_y, start_x, "PRESS [s] TO BEGIN");
@@ -150,14 +196,14 @@ static void main_screen(Interval *intervals, int intervals_total)
         int key = getch();
         switch(key) {
             case CMD_START:
-                start_interval(intervals, &intervals_total);
+                start_interval(intervals, &interval_count, categories, &category_count);
                 active = true;
                 break;
             case CMD_FINISH:
                 erase();
                 refresh();
-                intervals[intervals_total].end = time(NULL);
-                intervals_total--;
+                intervals[interval_count].end = time(NULL);
+                interval_count--;
                 active = false;
                 break;
             case CMD_QUIT:
@@ -168,17 +214,50 @@ static void main_screen(Interval *intervals, int intervals_total)
     }
 }
 
+static void init_colors()
+{
+    if(!has_colors())
+        return;
+
+    start_color();
+
+    init_pair(1, COLOR_GREEN, COLOR_WHITE); 
+    init_pair(2, COLOR_GREEN, COLOR_BLACK);
+    init_pair(5, COLOR_RED, COLOR_BLACK);
+    init_pair(6, COLOR_YELLOW, COLOR_BLACK);
+
+    // High-Definition vs. Fallback Pairs
+    if(COLORS >= colors_max) {
+        init_pair(3, 242, COLOR_BLACK); // Dimmed grey
+        init_pair(4, COLOR_GREEN, 242);
+        init_pair(7, COLOR_RED, 242);
+        init_pair(8, COLOR_WHITE, 242);
+        init_pair(9, 250, COLOR_BLACK); // Light grey
+    } else {
+        // Fallback for 8/16 color terminals (e.g., standard macOS Terminal)
+        init_pair(3, COLOR_WHITE, COLOR_BLACK); // Use white... 
+        init_pair(4, COLOR_GREEN, COLOR_WHITE);
+        init_pair(7, COLOR_RED, COLOR_WHITE);
+        init_pair(8, COLOR_BLACK, COLOR_WHITE);
+        init_pair(9, COLOR_WHITE, COLOR_BLACK);
+    }
+}
+
 int main() {
     initscr();
     cbreak();
     noecho();
     keypad(stdscr, 1);
     curs_set(0);
+    init_colors();
 
-    int intervals_total = 0;
+    Category categories[max_categories]; 
+    int category_count = 0;
+
     Interval my_intervals[max_intervals];
+    int interval_count = 0;
 
-    main_screen(my_intervals, intervals_total);
+    main_screen(my_intervals, interval_count, categories, category_count);
 
     endwin();
     return 0;
