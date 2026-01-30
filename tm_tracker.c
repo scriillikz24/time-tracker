@@ -110,7 +110,7 @@ static bool get_text_input(char *buffer, int max_len) {
 
 static void print_category_item(Category *category, int y, int x, bool highlighted) {
     if(!highlighted) attron(COLOR_PAIR(3)); 
-    mvprintw(y, x, "> %s", category->name);
+    mvprintw(y, x, "%c %s", highlighted ? '>' : ' ', category->name);
     if(!highlighted) attroff(COLOR_PAIR(3)); 
 }
 
@@ -144,7 +144,7 @@ static int categories_dashboard(Category *categories, int *category_count, int y
         attroff(A_BOLD);
 
         if(*category_count == 0)
-            mvprintw(y, x, "> Press [a] to add a category.");
+            mvprintw(y, x, "- Press [a] to add a category.");
 
         for(int i = 0; i < *category_count; i++) {
             print_category_item(&categories[i], y + i, x, i == highlight);
@@ -156,9 +156,11 @@ static int categories_dashboard(Category *categories, int *category_count, int y
             case CMD_CREATE:
                 add_category(categories, category_count);
                 break;
+            case 'k':
             case KEY_UP:
                 if(highlight > 0) highlight--;
                 break;
+            case 'j':
             case KEY_DOWN:
                 if(highlight < *category_count - 1) highlight++;
                 break;
@@ -166,6 +168,10 @@ static int categories_dashboard(Category *categories, int *category_count, int y
                 clear();
                 refresh();
                 return highlight;
+            case key_escape:
+                clear();
+                refresh();
+                return -1;
         }
     }
 }
@@ -201,7 +207,9 @@ static bool start_interval(Interval *intervals, int *interval_count, Category *c
         return false; // Not success
     }
     else {
-        current->category_idx = categories_dashboard(categories, category_count, start_y, start_x);
+        int idx = categories_dashboard(categories, category_count, start_y, start_x);
+        if(idx >= 0) current->category_idx = idx;
+        else return false;
     }
    
     current->start = time(NULL);
@@ -261,17 +269,17 @@ static void main_screen(Interval *intervals, int *interval_count, Category *cate
 
     bool active = false;
 
-    attron(A_BOLD);
-    mvprintw(start_y - 3, start_x, "THE MAIN SCREEN");
-    attroff(A_BOLD);
-
     while(1) {
+        attron(A_BOLD);
+        mvprintw(start_y - 3, start_x, "THE MAIN SCREEN");
+        attroff(A_BOLD);
+
         if(active){
             print_time(&intervals[*interval_count - 1], categories, start_y, start_x);
         }
         else {
-            mvprintw(start_y, start_x, "> PRESS [s] TO START AN INTERVAL");
-            mvprintw(start_y + 1, start_x, "> PRESS [c] TO ENTER THE CATEGORY DASHBOARD");
+            mvprintw(start_y, start_x, "- PRESS [s] TO START AN INTERVAL");
+            mvprintw(start_y + 1, start_x, "- PRESS [c] TO ENTER THE CATEGORY DASHBOARD");
         }
 
         int key = getch();
@@ -298,8 +306,6 @@ static void main_screen(Interval *intervals, int *interval_count, Category *cate
         }
     }
 }
-
-
 
 static void init_colors()
 {
