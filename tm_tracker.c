@@ -1,8 +1,14 @@
+#define _DEFAULT_SOURCE
 #include <curses.h>
 #include <stdlib.h>
 #include <time.h>
 #include <stdbool.h>
 #include <string.h>
+
+#ifndef PATH_MAX
+    #define PATH_MAX 4096
+#endif
+#define SAVE_FILE ".categories.dat"
 
 enum {
     name_max_length = 30,
@@ -204,7 +210,45 @@ static bool start_interval(Interval *intervals, int *interval_count, Category *c
     return true;
 }
 
-static void main_screen(Interval *intervals, int interval_count, Category *categories, int category_count)
+static void get_data_path(char *dest) {
+    const char *home = getenv("HOME");
+    if(home == NULL)
+        strncpy(dest, SAVE_FILE, PATH_MAX);
+    else
+        snprintf(dest, PATH_MAX, "%s/%s", home, SAVE_FILE);
+}
+
+static void push_categories(Category *categories, int count)
+{
+    char path[PATH_MAX];
+    get_data_path(path);
+
+    FILE *dest = fopen(path, "wb");
+    if(!dest) {
+        perror(SAVE_FILE);
+        exit(1);
+    }
+
+    fwrite(&count, sizeof(int), 1, dest);
+    fwrite(categories, sizeof(Category), count, dest);
+    fclose(dest);
+}
+
+static void pull_categories(Category *categories, int *count)
+{
+    char path[PATH_MAX];
+    get_data_path(path);
+
+    FILE *source = fopen(path, "rb");
+    if(!source) {
+        return;
+    }
+    fread(count, sizeof(int), 1, source);
+    fread(categories, sizeof(Category), *count, source);
+    fclose(source);
+}
+
+static void main_screen(Interval *intervals, int *interval_count, Category *categories, int *category_count)
 {
     timeout(default_timeout);
 
@@ -223,7 +267,7 @@ static void main_screen(Interval *intervals, int interval_count, Category *categ
 
     while(1) {
         if(active){
-            print_time(&intervals[interval_count - 1], categories, start_y, start_x);
+            print_time(&intervals[*interval_count - 1], categories, start_y, start_x);
         }
         else {
             mvprintw(start_y, start_x, "> PRESS [s] TO START AN INTERVAL");
@@ -233,26 +277,29 @@ static void main_screen(Interval *intervals, int interval_count, Category *categ
         int key = getch();
         switch(key) {
             case CMD_START:
-                if(start_interval(intervals, &interval_count, categories, &category_count))
+                if(start_interval(intervals, interval_count, categories, category_count))
                     active = true;
                 break;
             case CMD_FINISH:
                 erase();
                 refresh();
-                intervals[interval_count].end = time(NULL);
+                intervals[*interval_count - 1].end = time(NULL);
                 interval_count--;
                 active = false;
                 break;
             case CMD_CATEGORY:
-                categories_dashboard(categories, &category_count, start_y, start_x);
+                categories_dashboard(categories, category_count, start_y, start_x);
                 break;
             case CMD_QUIT:
             case key_escape:
+                push_categories(categories, *category_count);
                 endwin();
                 exit(0);
         }
     }
 }
+
+
 
 static void init_colors()
 {
@@ -297,7 +344,9 @@ int main() {
     Interval my_intervals[max_intervals];
     int interval_count = 0;
 
-    main_screen(my_intervals, interval_count, categories, category_count);
+    pull_categories(categories, &category_count);
+
+    main_screen(my_intervals, &interval_count, categories, &category_count);
 
     endwin();
     return 0;
