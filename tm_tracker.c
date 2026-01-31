@@ -38,20 +38,20 @@ typedef struct Interval {
     time_t end;
 } Interval;
 
-static void print_time(Interval *interval, Category *categories,  int start_y, int start_x)
+static void print_time(WINDOW *win, Interval *interval, Category *categories, int height, int width)
 {
-    erase();
     time_t current = time(NULL);
     time_t passed = current - interval->start;
 
     int minutes = passed / 60;
     int seconds = passed % 60;
 
-    attron(COLOR_PAIR(3));
-    mvprintw(start_y - 2, start_x, "%s", categories[interval->category_idx].name);
-    attroff(COLOR_PAIR(3));
-    mvprintw(start_y, start_x, "%02d:%02d", minutes, seconds);
-    refresh();
+    wattron(win, COLOR_PAIR(3));
+    char *category = categories[interval->category_idx].name;
+    mvwprintw(win, 1, (width - strlen(category)) / 2, "%s", category);
+    wattroff(win, COLOR_PAIR(3));
+    mvwprintw(win, height - 2, (width - 4) / 2, "%02d:%02d", minutes, seconds);
+    wrefresh(win);
 }
 
 static bool get_text_input(char *buffer, int max_len) {
@@ -59,7 +59,7 @@ static bool get_text_input(char *buffer, int max_len) {
     getmaxyx(stdscr, rows, cols);
 
     int height = 3;
-    int width = name_max_length;
+    int width = name_max_length + 2;
     int start_y = (rows - height) / 2;
     int start_x = (cols - width) / 2;
 
@@ -79,6 +79,8 @@ static bool get_text_input(char *buffer, int max_len) {
     while(1) {
         ch = wgetch(win);
         if(ch == key_escape) {
+            werase(win);
+            wrefresh(win);
             curs_set(0);
             return false;
         }
@@ -256,10 +258,40 @@ static void pull_categories(Category *categories, int *count)
     fclose(source);
 }
 
+static void active_screen(Interval *interval, Category *categories)
+{
+    erase();
+    refresh();
+    int rows, cols;
+    getmaxyx(stdscr, rows, cols);
+
+    int height = 5;
+    int width = name_max_length + 3; // +2 for padding
+    int start_y = (rows - height) / 2;
+    int start_x = (cols - width) / 2;
+
+    WINDOW *win = newwin(height, width, start_y, start_x);
+    keypad(win, TRUE);
+    
+    box(win, 0, 0); 
+    
+    while(1) {
+        print_time(win, interval, categories, height, width);
+
+        int key = getch();
+        if(key == key_escape || key == 'q') {
+            interval->end = time(NULL);
+            werase(win);
+            wrefresh(win);
+            delwin(0);
+            return;
+        }
+    }
+}
+
 static void main_screen(Interval *intervals, int *interval_count, Category *categories, int *category_count)
 {
     timeout(default_timeout);
-
 
     int r, c;
     getmaxyx(stdscr, r, c);
@@ -267,33 +299,19 @@ static void main_screen(Interval *intervals, int *interval_count, Category *cate
     int start_y = r / 2;
     int start_x = c / 2;
 
-    bool active = false;
-
     while(1) {
         attron(A_BOLD);
         mvprintw(start_y - 3, start_x, "THE MAIN SCREEN");
         attroff(A_BOLD);
 
-        if(active){
-            print_time(&intervals[*interval_count - 1], categories, start_y, start_x);
-        }
-        else {
-            mvprintw(start_y, start_x, "- PRESS [s] TO START AN INTERVAL");
-            mvprintw(start_y + 1, start_x, "- PRESS [c] TO ENTER THE CATEGORY DASHBOARD");
-        }
+        mvprintw(start_y, start_x, "- PRESS [s] TO START AN INTERVAL");
+        mvprintw(start_y + 1, start_x, "- PRESS [c] TO ENTER THE CATEGORY DASHBOARD");
 
         int key = getch();
         switch(key) {
             case CMD_START:
                 if(start_interval(intervals, interval_count, categories, category_count))
-                    active = true;
-                break;
-            case CMD_FINISH:
-                erase();
-                refresh();
-                intervals[*interval_count - 1].end = time(NULL);
-                interval_count--;
-                active = false;
+                    active_screen(&intervals[*interval_count - 1], categories);
                 break;
             case CMD_CATEGORY:
                 categories_dashboard(categories, category_count, start_y, start_x);
