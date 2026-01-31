@@ -8,7 +8,9 @@
 #ifndef PATH_MAX
     #define PATH_MAX 4096
 #endif
-#define SAVE_FILE ".categories.dat"
+#define CATEGORIES_FILE ".categories.dat"
+#define INTERVALS_FILE ".intervals.dat"
+#define ESC_HINT "<- Esc"
 
 enum {
     name_max_length = 30,
@@ -48,9 +50,12 @@ static void print_time(WINDOW *win, Interval *interval, Category *categories, in
     int minutes = passed / 60;
     int seconds = passed % 60;
 
-    wattron(win, COLOR_PAIR(3));
     char *category = categories[interval->category_idx].name;
+    wattron(win, A_BOLD);
     mvwprintw(win, 1, (width - strlen(category)) / 2, "%s", category);
+    wattroff(win, A_BOLD);
+    wattron(win, COLOR_PAIR(3));
+    mvwprintw(win, 1, 1, "%s", ESC_HINT);
     wattroff(win, COLOR_PAIR(3));
     mvwprintw(win, height - 2, (width - 4) / 2, "%02d:%02d", minutes, seconds);
     wrefresh(win);
@@ -143,6 +148,13 @@ static void delete_category(Category *categories, int *category_count, int idx)
     (*category_count)--;
 }
 
+static void delete_interval(Interval *intervals, int *count, int idx)
+{
+    for(int i = idx; i < (*count) - 1; i++)
+        intervals[i] = intervals[i+1];
+    (*count)--;
+}
+
 static int categories_dashboard(Category *categories, int *category_count, int y, int x)
 {
     erase(); 
@@ -194,18 +206,21 @@ static int categories_dashboard(Category *categories, int *category_count, int y
     }
 }
 
-static void print_interval_item(Interval *interval, Category *categories, int y, int x)
+static void print_interval_item(Interval *interval, Category *categories, int y, int x, bool highlighted)
 {
+    time_t time_focused = interval->end - interval->start;
     struct tm *start = localtime(&interval->start);
     int start_h = start->tm_hour;
     int start_m = start->tm_min;
     struct tm *end = localtime(&interval->end);
     int end_h = end->tm_hour;
     int end_m = end->tm_min;
-    int hours_focused = end_h - start_h;
-    int minutes_focused = end_m - start_m;
-    mvprintw(y, x, "- %s: %d:%d-%d:%d(%dh%dm)", categories[interval->category_idx].name,
-            start_h, start_m, end_h, end_m, hours_focused, minutes_focused);
+    int minutes_focused = time_focused / 60;
+    int seconds_focused = time_focused % 60;
+    if(!highlighted) attron(COLOR_PAIR(3));
+    mvprintw(y, x, "%c %s: %d:%d-%d:%d(%dm%ds)", highlighted ? '>' : '-', categories[interval->category_idx].name,
+            start_h, start_m, end_h, end_m, minutes_focused, seconds_focused);
+    if(!highlighted) attroff(COLOR_PAIR(3));
 }
 
 static void intervals_dashboard(Interval *intervals, Category *categories, int *interval_count, int start_y, int start_x)
@@ -213,6 +228,8 @@ static void intervals_dashboard(Interval *intervals, Category *categories, int *
     timeout(-1);
     erase();
     refresh();
+
+    int highlight = 0;
 
     while(1) {
         attron(A_BOLD);
@@ -229,15 +246,31 @@ static void intervals_dashboard(Interval *intervals, Category *categories, int *
         }
 
         for(int i = 0; i < *interval_count; i++)
-            print_interval_item(&intervals[i], categories, start_y + i, start_x);
+            print_interval_item(&intervals[i], categories, start_y + i, start_x, i == highlight);
 
         int key;
         key = getch();
-        if(key == key_escape) {
-            clear();
-            refresh();
-            timeout(default_timeout);
-            return;
+        switch(key) {
+            case CMD_DELETE:
+                delete_interval(intervals, interval_count, highlight);
+                if(highlight >= (*interval_count))
+                    highlight = *interval_count - 1;
+                erase(); 
+                refresh();
+                break;
+            case 'k':
+            case KEY_UP:
+                if(highlight > 0) highlight--;
+                break;
+            case 'j':
+            case KEY_DOWN:
+                if(highlight < *interval_count - 1) highlight++;
+                break;
+            case key_escape:
+                clear();
+                refresh();
+                timeout(default_timeout);
+                return;
         }
     }
 }
@@ -284,41 +317,41 @@ static bool start_interval(Interval *intervals, int *interval_count, Category *c
     return true;
 }
 
-static void get_data_path(char *dest) {
+static void get_data_path(char *dest, char *file_name) {
     const char *home = getenv("HOME");
     if(home == NULL)
-        strncpy(dest, SAVE_FILE, PATH_MAX);
+        strncpy(dest, file_name, PATH_MAX);
     else
-        snprintf(dest, PATH_MAX, "%s/%s", home, SAVE_FILE);
+        snprintf(dest, PATH_MAX, "%s/%s", home, file_name);
 }
 
-static void push_categories(Category *categories, int count)
+static void push(void *attr, size_t size, int count, char *file_name)
 {
     char path[PATH_MAX];
-    get_data_path(path);
+    get_data_path(path, file_name);
 
     FILE *dest = fopen(path, "wb");
     if(!dest) {
-        perror(SAVE_FILE);
+        perror(file_name);
         exit(1);
     }
 
     fwrite(&count, sizeof(int), 1, dest);
-    fwrite(categories, sizeof(Category), count, dest);
+    fwrite(attr, size, count, dest);
     fclose(dest);
 }
 
-static void pull_categories(Category *categories, int *count)
+static void pull(void *attr, size_t size, int *count, char *file_name)
 {
     char path[PATH_MAX];
-    get_data_path(path);
+    get_data_path(path, file_name);
 
     FILE *source = fopen(path, "rb");
     if(!source) {
         return;
     }
     fread(count, sizeof(int), 1, source);
-    fread(categories, sizeof(Category), *count, source);
+    fread(attr, size, *count, source);
     fclose(source);
 }
 
@@ -360,7 +393,7 @@ static void main_screen(Interval *intervals, int *interval_count, Category *cate
     int r, c;
     getmaxyx(stdscr, r, c);
 
-    int start_y = r / 2;
+    int start_y = (r - 10) / 2;
     int start_x = c / 2;
 
     while(1) {
@@ -386,7 +419,8 @@ static void main_screen(Interval *intervals, int *interval_count, Category *cate
                 break;
             case CMD_QUIT:
             case key_escape:
-                push_categories(categories, *category_count);
+                push(categories, sizeof(Category), *category_count, CATEGORIES_FILE);
+                push(intervals, sizeof(Interval), *interval_count, INTERVALS_FILE);
                 endwin();
                 exit(0);
         }
@@ -433,12 +467,13 @@ int main() {
     Category categories[max_categories]; 
     int category_count = 0;
 
-    Interval my_intervals[max_intervals];
+    Interval intervals[max_intervals];
     int interval_count = 0;
 
-    pull_categories(categories, &category_count);
+    pull(categories, sizeof(Category), &category_count, CATEGORIES_FILE);
+    pull(intervals, sizeof(Interval), &interval_count, INTERVALS_FILE);
 
-    main_screen(my_intervals, &interval_count, categories, &category_count);
+    main_screen(intervals, &interval_count, categories, &category_count);
 
     endwin();
     return 0;
