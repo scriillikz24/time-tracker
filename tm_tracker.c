@@ -25,6 +25,7 @@ enum {
     CMD_DELETE = 'd',
     CMD_QUIT = 'q',
     CMD_CATEGORY = 'c',
+    CMD_INTERVAL = 'i',
     CMD_CREATE = 'a'
 
 };
@@ -193,6 +194,40 @@ static int categories_dashboard(Category *categories, int *category_count, int y
     }
 }
 
+static void intervals_dashboard(Interval *intervals, Category *categories, int *interval_count, int start_y, int start_x)
+{
+    timeout(-1);
+    erase();
+    refresh();
+
+    while(1) {
+        attron(A_BOLD);
+        mvprintw(start_y - 3, start_x, "THE INTERVALS DASHBOARD");
+        attroff(A_BOLD);
+
+        if(*interval_count == 0) {
+            mvprintw(start_y, start_x, "-- No intervals to display --");
+            getch();
+            clear();
+            refresh();
+            timeout(default_timeout);
+            return;
+        }
+
+        for(int i = 0; i < *interval_count; i++)
+            mvprintw(start_y + i, start_x, "- %s: ", categories[intervals[i].category_idx].name);
+
+        int key;
+        key = getch();
+        if(key == key_escape) {
+            clear();
+            refresh();
+            timeout(default_timeout);
+            return;
+        }
+    }
+}
+
 static bool start_interval(Interval *intervals, int *interval_count, Category *categories, int *category_count)
 {
     clear();
@@ -321,6 +356,7 @@ static void main_screen(Interval *intervals, int *interval_count, Category *cate
 
         mvprintw(start_y, start_x, "- PRESS [s] TO START AN INTERVAL");
         mvprintw(start_y + 1, start_x, "- PRESS [c] TO ENTER THE CATEGORY DASHBOARD");
+        mvprintw(start_y + 2, start_x, "- PRESS [i] TO ENTER THE INTERVAL DASHBOARD");
 
         int key = getch();
         switch(key) {
@@ -330,6 +366,9 @@ static void main_screen(Interval *intervals, int *interval_count, Category *cate
                 break;
             case CMD_CATEGORY:
                 categories_dashboard(categories, category_count, start_y, start_x);
+                break;
+            case CMD_INTERVAL:
+                intervals_dashboard(intervals, categories, interval_count, start_y + 3, start_x);
                 break;
             case CMD_QUIT:
             case key_escape:
