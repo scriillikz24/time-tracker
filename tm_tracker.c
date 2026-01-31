@@ -194,6 +194,20 @@ static int categories_dashboard(Category *categories, int *category_count, int y
     }
 }
 
+static void print_interval_item(Interval *interval, Category *categories, int y, int x)
+{
+    struct tm *start = localtime(&interval->start);
+    int start_h = start->tm_hour;
+    int start_m = start->tm_min;
+    struct tm *end = localtime(&interval->end);
+    int end_h = end->tm_hour;
+    int end_m = end->tm_min;
+    int hours_focused = end_h - start_h;
+    int minutes_focused = end_m - start_m;
+    mvprintw(y, x, "- %s: %d:%d-%d:%d(%dh%dm)", categories[interval->category_idx].name,
+            start_h, start_m, end_h, end_m, hours_focused, minutes_focused);
+}
+
 static void intervals_dashboard(Interval *intervals, Category *categories, int *interval_count, int start_y, int start_x)
 {
     timeout(-1);
@@ -215,7 +229,7 @@ static void intervals_dashboard(Interval *intervals, Category *categories, int *
         }
 
         for(int i = 0; i < *interval_count; i++)
-            mvprintw(start_y + i, start_x, "- %s: ", categories[intervals[i].category_idx].name);
+            print_interval_item(&intervals[i], categories, start_y + i, start_x);
 
         int key;
         key = getch();
