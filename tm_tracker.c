@@ -22,10 +22,11 @@ enum {
 
 enum {
     CMD_START = 's',
-    CMD_FINISH = 'f',
+    CMD_DELETE = 'd',
     CMD_QUIT = 'q',
     CMD_CATEGORY = 'c',
     CMD_CREATE = 'a'
+
 };
 
 typedef struct Category {
@@ -133,11 +134,18 @@ static void add_category(Category *categories, int *category_count)
     (*category_count)++;
 }
 
+static void delete_category(Category *categories, int *category_count, int idx)
+{
+    int i;
+    for(i = idx; i < (*category_count) - 1; i++)
+        categories[i] = categories[i+1];
+    (*category_count)--;
+}
+
 static int categories_dashboard(Category *categories, int *category_count, int y, int x)
 {
     erase(); 
     refresh();
-
     int highlight = 0;
 
     while(1) {
@@ -157,6 +165,13 @@ static int categories_dashboard(Category *categories, int *category_count, int y
         switch(key) {
             case CMD_CREATE:
                 add_category(categories, category_count);
+                break;
+            case CMD_DELETE:
+                delete_category(categories, category_count, highlight);
+                if(highlight >= (*category_count))
+                    highlight = *category_count - 1;
+                erase(); 
+                refresh();
                 break;
             case 'k':
             case KEY_UP:
@@ -283,7 +298,7 @@ static void active_screen(Interval *interval, Category *categories)
             interval->end = time(NULL);
             werase(win);
             wrefresh(win);
-            delwin(0);
+            delwin(win);
             return;
         }
     }
