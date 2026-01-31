@@ -20,16 +20,16 @@ enum {
     key_enter = 10,
     default_timeout = 1000,
     colors_max = 256,
+    bar_gap = 4,
+    bar_height = 3
 };
 
 enum {
     CMD_START = 's',
     CMD_DELETE = 'd',
-    CMD_QUIT = 'q',
     CMD_CATEGORY = 'c',
-    CMD_INTERVAL = 'i',
+    CMD_HISTORY = 'h',
     CMD_CREATE = 'a'
-
 };
 
 typedef struct Category {
@@ -41,6 +41,29 @@ typedef struct Interval {
     time_t start;
     time_t end;
 } Interval;
+
+static void action_bar(int rows, int cols, const char **bar_items, int bar_count)
+{
+    int total_width = 0;
+    for(int i = 0; i < bar_count; i++) 
+        total_width += strlen(bar_items[i]) + bar_gap;
+
+    // Center the bar at the bottom of the screen
+    int x_offset = (cols - total_width + bar_gap) / 2;
+    int y_pos = rows - 2;
+
+    // Draw a background strip for the menu
+    attron(COLOR_PAIR(3)); 
+    mvhline(y_pos - 1, 0, ACS_HLINE, cols); 
+    mvhline(y_pos + 1, 0, ACS_HLINE, cols); 
+    attroff(COLOR_PAIR(3));
+    
+    for(int i = 0; i < bar_count; i++) {
+        mvaddstr(y_pos, x_offset, bar_items[i]);
+        x_offset += strlen(bar_items[i]) + bar_gap;
+    }
+    refresh();
+}
 
 static void print_time(WINDOW *win, Interval *interval, Category *categories, int height, int width)
 {
@@ -155,19 +178,34 @@ static void delete_interval(Interval *intervals, int *count, int idx)
     (*count)--;
 }
 
-static int categories_dashboard(Category *categories, int *category_count, int y, int x)
+static void categories_dashboard(Category *categories, int *category_count, int *chosen)
 {
     erase(); 
     refresh();
     int highlight = 0;
 
+    int r, c;
+    getmaxyx(stdscr, r, c);
+    int y = r / 2;
+    int x = c / 2;
+
+    static const char *bar_items[] = {
+        "[a] Add",
+        "[d] Delete",
+        "[Esc] Back"
+    };
+
+    int bar_count = sizeof(bar_items) / sizeof(bar_items[0]);
+
     while(1) {
         attron(A_BOLD);
-        mvprintw(y - 3, x, "THE CATEGORIES DASHBOARD");
+        mvprintw(y - 3, x, "CATEGORIES DASHBOARD");
         attroff(A_BOLD);
 
+        action_bar(r, c, bar_items, bar_count);
+
         if(*category_count == 0)
-            mvprintw(y, x, "- Press [a] to add a category.");
+            mvprintw(y, x, "-- Nothing to display yet --");
 
         for(int i = 0; i < *category_count; i++) {
             print_category_item(&categories[i], y + i, x, i == highlight);
@@ -197,11 +235,13 @@ static int categories_dashboard(Category *categories, int *category_count, int y
             case key_enter:
                 clear();
                 refresh();
-                return highlight;
+                *chosen = highlight;
+                return;
             case key_escape:
                 clear();
                 refresh();
-                return -1;
+                *chosen = -1;
+                return;
         }
     }
 }
@@ -223,18 +263,32 @@ static void print_interval_item(Interval *interval, Category *categories, int y,
     if(!highlighted) attroff(COLOR_PAIR(3));
 }
 
-static void intervals_dashboard(Interval *intervals, Category *categories, int *interval_count, int start_y, int start_x)
+static void history_dashboard(Interval *intervals, Category *categories, int *interval_count)
 {
     timeout(-1);
     erase();
     refresh();
 
+    int r, c;
+    getmaxyx(stdscr, r, c);
+    int start_y = (r - 5) / 2;
+    int start_x = (c - name_max_length) / 2;
+
+    static const char *bar_items[] = {
+        "[d] Delete",
+        "[Esc] Back"
+    };
+
+    int bar_count = sizeof(bar_items) / sizeof(bar_items[0]);
+
     int highlight = 0;
 
     while(1) {
         attron(A_BOLD);
-        mvprintw(start_y - 3, start_x, "THE INTERVALS DASHBOARD");
+        mvprintw(start_y - 3, start_x, "HISTORY");
         attroff(A_BOLD);
+
+        action_bar(r, c, bar_items, bar_count);
 
         if(*interval_count == 0) {
             mvprintw(start_y, start_x, "-- No intervals to display --");
@@ -306,7 +360,8 @@ static bool start_interval(Interval *intervals, int *interval_count, Category *c
         return false; // Not success
     }
     else {
-        int idx = categories_dashboard(categories, category_count, start_y, start_x);
+        int idx;
+        categories_dashboard(categories, category_count, &idx);
         if(idx >= 0) current->category_idx = idx;
         else return false;
     }
@@ -390,20 +445,27 @@ static void main_screen(Interval *intervals, int *interval_count, Category *cate
 {
     timeout(default_timeout);
 
+    static const char *bar_items[] = {
+        "[s] Start",
+        "[c] Categories",
+        "[h] History",
+        "[Esc] Exit"
+    };
+
+    int bar_count = sizeof(bar_items) / sizeof(bar_items[0]);
+
     int r, c;
     getmaxyx(stdscr, r, c);
 
-    int start_y = (r - 10) / 2;
-    int start_x = c / 2;
+    int start_y = (r - bar_height) / 2;
 
     while(1) {
+        const char message[] = "MAIN SCREEN";
         attron(A_BOLD);
-        mvprintw(start_y - 3, start_x, "THE MAIN SCREEN");
+        mvprintw(start_y, (c - strlen(message)) / 2, "MAIN SCREEN");
         attroff(A_BOLD);
 
-        mvprintw(start_y, start_x, "- PRESS [s] TO START AN INTERVAL");
-        mvprintw(start_y + 1, start_x, "- PRESS [c] TO ENTER THE CATEGORY DASHBOARD");
-        mvprintw(start_y + 2, start_x, "- PRESS [i] TO ENTER THE INTERVAL DASHBOARD");
+        action_bar(r, c, bar_items, bar_count);
 
         int key = getch();
         switch(key) {
@@ -412,12 +474,12 @@ static void main_screen(Interval *intervals, int *interval_count, Category *cate
                     active_screen(&intervals[*interval_count - 1], categories);
                 break;
             case CMD_CATEGORY:
-                categories_dashboard(categories, category_count, start_y, start_x);
+                int option;
+                categories_dashboard(categories, category_count, &option);
                 break;
-            case CMD_INTERVAL:
-                intervals_dashboard(intervals, categories, interval_count, start_y + 3, start_x);
+            case CMD_HISTORY:
+                history_dashboard(intervals, categories, interval_count);
                 break;
-            case CMD_QUIT:
             case key_escape:
                 push(categories, sizeof(Category), *category_count, CATEGORIES_FILE);
                 push(intervals, sizeof(Interval), *interval_count, INTERVALS_FILE);
