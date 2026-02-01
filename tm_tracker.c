@@ -21,7 +21,8 @@ enum {
     default_timeout = 1000,
     colors_max = 256,
     bar_gap = 4,
-    bar_height = 3
+    bar_height = 3,
+    minutes_in_hour = 60
 };
 
 enum {
@@ -410,6 +411,39 @@ static void pull(void *attr, size_t size, int *count, char *file_name)
     fclose(source);
 }
 
+static int get_day_time_stats(Interval *intervals, Category *categories, int interval_count, int day)
+{
+    int total = 0;
+    for(int i = 0; i < interval_count; i++) {
+        int interval_day = localtime(&intervals[i].start)->tm_yday;
+        if(interval_day == day) {
+            total += intervals[i].end - intervals[i].start;
+        }
+    }
+    return total;
+}
+
+static void statistics_screen(Interval *intervals, Category *categories, int interval_count, int y, int x)
+{
+    time_t now = time(NULL);
+    int day = localtime(&now)->tm_yday;
+
+    const char *months[] = {
+    "January", "February", "March", "April", "May", "June",
+    "July", "August", "September", "October", "November", "December"
+};
+
+    int day_total = get_day_time_stats(intervals, categories, interval_count, day);
+    int ymonth = localtime(&now)->tm_mon;
+    int mday = localtime(&now)->tm_mday;
+
+    mvprintw(y, x, "> %s %d <", months[ymonth], mday);
+    attron(COLOR_PAIR(3));
+    mvprintw(y + 2, x, "Total time spent: %dm%ds", day_total / minutes_in_hour, day_total % minutes_in_hour);
+    attroff(COLOR_PAIR(3));
+    refresh();
+}
+
 static void active_screen(Interval *interval, Category *categories)
 {
     erase();
@@ -458,12 +492,10 @@ static void main_screen(Interval *intervals, int *interval_count, Category *cate
     getmaxyx(stdscr, r, c);
 
     int start_y = (r - bar_height) / 2;
+    int start_x = c / 2;
 
     while(1) {
-        const char message[] = "MAIN SCREEN";
-        attron(A_BOLD);
-        mvprintw(start_y, (c - strlen(message)) / 2, "MAIN SCREEN");
-        attroff(A_BOLD);
+        statistics_screen(intervals, categories, *interval_count, start_y, start_x);
 
         action_bar(r, c, bar_items, bar_count);
 
