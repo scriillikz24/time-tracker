@@ -22,7 +22,9 @@ enum {
     colors_max = 256,
     bar_gap = 4,
     bar_height = 3,
-    minutes_in_hour = 60
+    minutes_in_hour = 60,
+    days_in_year = 366,
+    months_in_year = 12
 };
 
 enum {
@@ -30,6 +32,7 @@ enum {
     CMD_DELETE = 'd',
     CMD_CATEGORY = 'c',
     CMD_HISTORY = 'h',
+    CMD_STATS = 't',
     CMD_CREATE = 'a'
 };
 
@@ -43,8 +46,10 @@ typedef struct Interval {
     time_t end;
 } Interval;
 
-static void action_bar(int rows, int cols, const char **bar_items, int bar_count)
+static void action_bar(const char **bar_items, int bar_count)
 {
+    int rows, cols;
+    getmaxyx(stdscr, rows, cols);
     int total_width = 0;
     for(int i = 0; i < bar_count; i++) 
         total_width += strlen(bar_items[i]) + bar_gap;
@@ -203,7 +208,7 @@ static void categories_dashboard(Category *categories, int *category_count, int 
         mvprintw(y - 3, x, "CATEGORIES DASHBOARD");
         attroff(A_BOLD);
 
-        action_bar(r, c, bar_items, bar_count);
+        action_bar(bar_items, bar_count);
 
         if(*category_count == 0)
             mvprintw(y, x, "-- Nothing to display yet --");
@@ -253,14 +258,16 @@ static void print_interval_item(Interval *interval, Category *categories, int y,
     struct tm *start = localtime(&interval->start);
     int start_h = start->tm_hour;
     int start_m = start->tm_min;
+    int start_month = start->tm_mon + 1; 
+    int start_day = start->tm_mday;
     struct tm *end = localtime(&interval->end);
     int end_h = end->tm_hour;
     int end_m = end->tm_min;
     int minutes_focused = time_focused / 60;
     int seconds_focused = time_focused % 60;
     if(!highlighted) attron(COLOR_PAIR(3));
-    mvprintw(y, x, "%c %s: %d:%d-%d:%d(%dm%ds)", highlighted ? '>' : '-', categories[interval->category_idx].name,
-            start_h, start_m, end_h, end_m, minutes_focused, seconds_focused);
+    mvprintw(y, x, "%c %s: [%02d/%02d]%02d:%02d-%02d:%02d(%02dm%02ds)", highlighted ? '>' : '-', categories[interval->category_idx].name,
+            start_day, start_month, start_h, start_m, end_h, end_m, minutes_focused, seconds_focused);
     if(!highlighted) attroff(COLOR_PAIR(3));
 }
 
@@ -289,7 +296,7 @@ static void history_dashboard(Interval *intervals, Category *categories, int *in
         mvprintw(start_y - 3, start_x, "HISTORY");
         attroff(A_BOLD);
 
-        action_bar(r, c, bar_items, bar_count);
+        action_bar(bar_items, bar_count);
 
         if(*interval_count == 0) {
             mvprintw(start_y, start_x, "-- No intervals to display --");
@@ -411,7 +418,7 @@ static void pull(void *attr, size_t size, int *count, char *file_name)
     fclose(source);
 }
 
-static int get_day_time_stats(Interval *intervals, Category *categories, int interval_count, int day)
+static int get_day_total_time(Interval *intervals, Category *categories, int interval_count, int day)
 {
     int total = 0;
     for(int i = 0; i < interval_count; i++) {
@@ -423,25 +430,195 @@ static int get_day_time_stats(Interval *intervals, Category *categories, int int
     return total;
 }
 
+static void day_stats(Interval *intervals, Category *categories, int interval_count, int y, int x)
+{ 
+    erase();
+    refresh();
+    time_t now = time(NULL);
+    struct tm *t = localtime(&now);
+    struct tm dynamic_t = *t;
+
+    while(1) {
+        mktime(&dynamic_t);
+        int day_total = get_day_total_time(intervals, categories, interval_count, dynamic_t.tm_yday);
+
+        attron(A_BOLD);
+        mvaddstr(y, x, "---- DAY STATS ----");
+        attroff(A_BOLD);
+
+        attron(COLOR_PAIR(3));
+        mvprintw(y + 2, x, "<- %02d/%02d/%d ->", dynamic_t.tm_mday, dynamic_t.tm_mon + 1, dynamic_t.tm_year + 1900);
+        attroff(COLOR_PAIR(3));
+        mvprintw(y + 4, x, "Total: %02dm%02ds", day_total / minutes_in_hour, day_total % minutes_in_hour);
+        refresh();
+
+        int key = getch();
+        switch(key) {
+            case KEY_RIGHT:
+                (dynamic_t.tm_mday)++;
+                mktime(&dynamic_t);
+                if(dynamic_t.tm_yday > t->tm_yday && dynamic_t.tm_year == t->tm_year)
+                    (dynamic_t.tm_mday)--;
+                break;
+            case KEY_LEFT:
+                (dynamic_t.tm_mday)--;
+                mktime(&dynamic_t);
+                break;
+            case key_escape:
+                erase();
+                refresh();
+                return;
+        }
+    }
+}
+
+static int get_month_total_time(Interval *intervals, Category *categories, int interval_count, int month)
+{
+    int total = 0;
+    for(int i = 0; i < interval_count; i++) {
+        int interval_month = localtime(&intervals[i].start)->tm_mon;
+        if(interval_month == month) {
+            total += intervals[i].end - intervals[i].start;
+        }
+    }
+    return total;
+}
+
+static void month_stats(Interval *intervals, Category *categories, int interval_count, int y, int x)
+{ 
+    erase();
+    refresh();
+    time_t now = time(NULL);
+    struct tm *t = localtime(&now);
+    struct tm dynamic_t = *t;
+
+    while(1) {
+        mktime(&dynamic_t);
+        int month_total = get_month_total_time(intervals, categories, interval_count, dynamic_t.tm_mon);
+
+        attron(A_BOLD);
+        mvaddstr(y, x, "---- MONTH STATS ----");
+        attroff(A_BOLD);
+
+        attron(COLOR_PAIR(3));
+        mvprintw(y + 2, x, "<- %02d/%d ->", dynamic_t.tm_mon + 1, dynamic_t.tm_year + 1900);
+        attroff(COLOR_PAIR(3));
+        mvprintw(y + 4, x, "Total: %02dm%02ds", month_total / minutes_in_hour, month_total % minutes_in_hour);
+        refresh();
+
+        int key = getch();
+        switch(key) {
+            case KEY_RIGHT:
+                (dynamic_t.tm_mon)++;
+                mktime(&dynamic_t);
+                if(dynamic_t.tm_mon > t->tm_mon && dynamic_t.tm_year == t->tm_year)
+                    (dynamic_t.tm_mon)--;
+                break;
+            case KEY_LEFT:
+                (dynamic_t.tm_mon)--;
+                mktime(&dynamic_t);
+                break;
+            case key_escape:
+                erase();
+                refresh();
+                return;
+        }
+    }
+}
+
+static int get_year_total_time(Interval *intervals, Category *categories, int interval_count, int year)
+{
+    int total = 0;
+    for(int i = 0; i < interval_count; i++) {
+        int interval_year = localtime(&intervals[i].start)->tm_year;
+        if(interval_year == year) {
+            total += intervals[i].end - intervals[i].start;
+        }
+    }
+    return total;
+}
+
+static void year_stats(Interval *intervals, Category *categories, int interval_count, int y, int x)
+{
+    erase();
+    refresh();
+    time_t now = time(NULL);
+    struct tm *t = localtime(&now);
+    struct tm dynamic_t = *t;
+
+    while(1) {
+        mktime(&dynamic_t);
+        int year_total = get_year_total_time(intervals, categories, interval_count, dynamic_t.tm_year);
+
+        attron(A_BOLD);
+        mvaddstr(y, x, "---- YEAR STATS ----");
+        attroff(A_BOLD);
+
+        attron(COLOR_PAIR(3));
+        mvprintw(y + 2, x, "<- %d ->", dynamic_t.tm_year + 1900);
+        attroff(COLOR_PAIR(3));
+        mvprintw(y + 4, x, "Total: %02dm%02ds", year_total / minutes_in_hour, year_total % minutes_in_hour);
+        refresh();
+
+        int key = getch();
+        switch(key) {
+            case KEY_RIGHT:
+                (dynamic_t.tm_year)++;
+                mktime(&dynamic_t);
+                if(dynamic_t.tm_year > t->tm_year)
+                    (dynamic_t.tm_year)--;
+                break;
+            case KEY_LEFT:
+                (dynamic_t.tm_year)--;
+                mktime(&dynamic_t);
+                break;
+            case key_escape:
+                erase();
+                refresh();
+                return;
+        }
+    }
+
+}
+
 static void statistics_screen(Interval *intervals, Category *categories, int interval_count, int y, int x)
 {
-    time_t now = time(NULL);
-    int day = localtime(&now)->tm_yday;
-
-    const char *months[] = {
-    "January", "February", "March", "April", "May", "June",
-    "July", "August", "September", "October", "November", "December"
-};
-
-    int day_total = get_day_time_stats(intervals, categories, interval_count, day);
-    int ymonth = localtime(&now)->tm_mon;
-    int mday = localtime(&now)->tm_mday;
-
-    mvprintw(y, x, "> %s %d <", months[ymonth], mday);
-    attron(COLOR_PAIR(3));
-    mvprintw(y + 2, x, "Total time spent: %dm%ds", day_total / minutes_in_hour, day_total % minutes_in_hour);
-    attroff(COLOR_PAIR(3));
+    erase();
     refresh();
+
+    static const char *bar_items[] = {
+        "[d] Day",
+        "[m] Month",
+        "[y] Year",
+        "[Esc] Exit"
+    };
+
+    int bar_count = sizeof(bar_items) / sizeof(bar_items[0]);
+
+    while(1) {
+        attron(A_BOLD);
+        mvaddstr(y - 2, x, "-- STATISTICS SCREEN --");
+        attroff(A_BOLD);
+
+        action_bar(bar_items, bar_count);
+        
+        int key = getch();
+        switch(key) {
+            case 'd':
+                day_stats(intervals, categories, interval_count, y, x);
+                break;
+            case 'm':
+                month_stats(intervals, categories, interval_count, y, x);
+                break;
+            case 'y':
+                year_stats(intervals, categories, interval_count, y, x);
+                break;
+            case key_escape:
+                erase();
+                refresh();
+                return;
+        }
+    }
 }
 
 static void active_screen(Interval *interval, Category *categories)
@@ -483,6 +660,7 @@ static void main_screen(Interval *intervals, int *interval_count, Category *cate
         "[s] Start",
         "[c] Categories",
         "[h] History",
+        "[t] Stats",
         "[Esc] Exit"
     };
 
@@ -495,9 +673,11 @@ static void main_screen(Interval *intervals, int *interval_count, Category *cate
     int start_x = c / 2;
 
     while(1) {
-        statistics_screen(intervals, categories, *interval_count, start_y, start_x);
+        attron(A_BOLD);
+        mvaddstr(start_y, start_x, "-- MAIN SCREEN --");
+        attroff(A_BOLD);
 
-        action_bar(r, c, bar_items, bar_count);
+        action_bar(bar_items, bar_count);
 
         int key = getch();
         switch(key) {
@@ -511,6 +691,9 @@ static void main_screen(Interval *intervals, int *interval_count, Category *cate
                 break;
             case CMD_HISTORY:
                 history_dashboard(intervals, categories, interval_count);
+                break;
+            case CMD_STATS:
+                statistics_screen(intervals, categories, *interval_count, start_y, start_x);
                 break;
             case key_escape:
                 push(categories, sizeof(Category), *category_count, CATEGORIES_FILE);
