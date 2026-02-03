@@ -430,48 +430,6 @@ static int get_day_total_time(Interval *intervals, Category *categories, int int
     return total;
 }
 
-static void day_stats(Interval *intervals, Category *categories, int interval_count, int y, int x)
-{ 
-    erase();
-    refresh();
-    time_t now = time(NULL);
-    struct tm *t = localtime(&now);
-    struct tm dynamic_t = *t;
-
-    while(1) {
-        mktime(&dynamic_t);
-        int day_total = get_day_total_time(intervals, categories, interval_count, dynamic_t.tm_yday);
-
-        attron(A_BOLD);
-        mvaddstr(y, x, "---- DAY STATS ----");
-        attroff(A_BOLD);
-
-        attron(COLOR_PAIR(3));
-        mvprintw(y + 2, x, "<- %02d/%02d/%d ->", dynamic_t.tm_mday, dynamic_t.tm_mon + 1, dynamic_t.tm_year + 1900);
-        attroff(COLOR_PAIR(3));
-        mvprintw(y + 4, x, "Total: %02dm%02ds", day_total / minutes_in_hour, day_total % minutes_in_hour);
-        refresh();
-
-        int key = getch();
-        switch(key) {
-            case KEY_RIGHT:
-                (dynamic_t.tm_mday)++;
-                mktime(&dynamic_t);
-                if(dynamic_t.tm_yday > t->tm_yday && dynamic_t.tm_year == t->tm_year)
-                    (dynamic_t.tm_mday)--;
-                break;
-            case KEY_LEFT:
-                (dynamic_t.tm_mday)--;
-                mktime(&dynamic_t);
-                break;
-            case key_escape:
-                erase();
-                refresh();
-                return;
-        }
-    }
-}
-
 static int get_month_total_time(Interval *intervals, Category *categories, int interval_count, int month)
 {
     int total = 0;
@@ -482,48 +440,6 @@ static int get_month_total_time(Interval *intervals, Category *categories, int i
         }
     }
     return total;
-}
-
-static void month_stats(Interval *intervals, Category *categories, int interval_count, int y, int x)
-{ 
-    erase();
-    refresh();
-    time_t now = time(NULL);
-    struct tm *t = localtime(&now);
-    struct tm dynamic_t = *t;
-
-    while(1) {
-        mktime(&dynamic_t);
-        int month_total = get_month_total_time(intervals, categories, interval_count, dynamic_t.tm_mon);
-
-        attron(A_BOLD);
-        mvaddstr(y, x, "---- MONTH STATS ----");
-        attroff(A_BOLD);
-
-        attron(COLOR_PAIR(3));
-        mvprintw(y + 2, x, "<- %02d/%d ->", dynamic_t.tm_mon + 1, dynamic_t.tm_year + 1900);
-        attroff(COLOR_PAIR(3));
-        mvprintw(y + 4, x, "Total: %02dm%02ds", month_total / minutes_in_hour, month_total % minutes_in_hour);
-        refresh();
-
-        int key = getch();
-        switch(key) {
-            case KEY_RIGHT:
-                (dynamic_t.tm_mon)++;
-                mktime(&dynamic_t);
-                if(dynamic_t.tm_mon > t->tm_mon && dynamic_t.tm_year == t->tm_year)
-                    (dynamic_t.tm_mon)--;
-                break;
-            case KEY_LEFT:
-                (dynamic_t.tm_mon)--;
-                mktime(&dynamic_t);
-                break;
-            case key_escape:
-                erase();
-                refresh();
-                return;
-        }
-    }
 }
 
 static int get_year_total_time(Interval *intervals, Category *categories, int interval_count, int year)
@@ -538,39 +454,104 @@ static int get_year_total_time(Interval *intervals, Category *categories, int in
     return total;
 }
 
-static void year_stats(Interval *intervals, Category *categories, int interval_count, int y, int x)
+typedef int (*get_total_func)(Interval*, Category*, int, int);
+typedef void(*update_time)(struct tm*, struct tm*, int);
+typedef int(*get_total_target)(struct tm*);
+typedef void(*display_date_line)(struct tm*, int, int);
+
+static int get_yday(struct tm *dynamic_t) { return dynamic_t->tm_yday; }
+
+static int get_month(struct tm *dynamic_t) { return dynamic_t->tm_mon; }
+
+static int get_year(struct tm *dynamic_t) { return dynamic_t->tm_year; }
+
+static void update_year(struct tm *dynamic_t, struct tm *t, int step)
+{
+    dynamic_t->tm_year += step;
+    mktime(dynamic_t);
+    if(step > 0 && dynamic_t->tm_year > t->tm_year)
+        (dynamic_t->tm_year) -= step;
+}
+
+static void update_month(struct tm *dynamic_t, struct tm *t, int step)
+{
+    dynamic_t->tm_mon += step;
+    mktime(dynamic_t);
+    if(step > 0 && dynamic_t->tm_year == t->tm_year
+            && dynamic_t->tm_mon > t->tm_mon)
+        (dynamic_t->tm_mon) -= step;
+}
+
+static void update_day(struct tm *dynamic_t, struct tm *t, int step)
+{
+    dynamic_t->tm_mday += step;
+    mktime(dynamic_t);
+    if(dynamic_t->tm_yday > t->tm_yday 
+            && dynamic_t->tm_year == t->tm_year)
+        (dynamic_t->tm_mday) -= step;
+}
+
+static void display_year_line(struct tm *dynamic_t, int y, int x)
+{
+    attron(COLOR_PAIR(3));
+    mvprintw(y + 2, x, "<- %d ->", dynamic_t->tm_year + 1900);
+    attroff(COLOR_PAIR(3));
+}
+
+static void display_month_line(struct tm *dynamic_t, int y, int x)
+{
+    attron(COLOR_PAIR(3));
+    mvprintw(y + 2, x, "<- %02d/%d ->", dynamic_t->tm_mon + 1, dynamic_t->tm_year + 1900);
+    attroff(COLOR_PAIR(3));
+}
+
+static void display_day_line(struct tm *dynamic_t, int y, int x)
+{
+    attron(COLOR_PAIR(3));
+    mvprintw(y + 2, x, "<- %02d/%02d/%d ->", dynamic_t->tm_mday, dynamic_t->tm_mon + 1, dynamic_t->tm_year + 1900);
+    attroff(COLOR_PAIR(3));
+}
+
+static void stats(
+        Interval *intervals,
+        Category *categories,
+        int interval_count,
+        int y,
+        int x,
+        const char *title,
+        display_date_line display_line,
+        get_total_target get_target,
+        update_time update_tm,
+        get_total_func get_total)
 {
     erase();
     refresh();
     time_t now = time(NULL);
-    struct tm *t = localtime(&now);
-    struct tm dynamic_t = *t;
+    struct tm t = *localtime(&now);
+    struct tm dynamic_t = t;
 
     while(1) {
         mktime(&dynamic_t);
-        int year_total = get_year_total_time(intervals, categories, interval_count, dynamic_t.tm_year);
+        int total = get_total(intervals, categories,
+                interval_count, get_target(&dynamic_t));
 
         attron(A_BOLD);
-        mvaddstr(y, x, "---- YEAR STATS ----");
+        mvprintw(y, x, "---- %s STATS ----", title);
         attroff(A_BOLD);
 
-        attron(COLOR_PAIR(3));
-        mvprintw(y + 2, x, "<- %d ->", dynamic_t.tm_year + 1900);
-        attroff(COLOR_PAIR(3));
-        mvprintw(y + 4, x, "Total: %02dm%02ds", year_total / minutes_in_hour, year_total % minutes_in_hour);
+        display_line(&dynamic_t, y, x);
+        mvprintw(y + 4, x, "Total: %02dm%02ds",
+                total / minutes_in_hour,
+                total % minutes_in_hour);
         refresh();
 
         int key = getch();
         switch(key) {
             case KEY_RIGHT:
-                (dynamic_t.tm_year)++;
-                mktime(&dynamic_t);
-                if(dynamic_t.tm_year > t->tm_year)
-                    (dynamic_t.tm_year)--;
+                update_tm(&dynamic_t, &t, 1);
                 break;
             case KEY_LEFT:
-                (dynamic_t.tm_year)--;
-                mktime(&dynamic_t);
+                update_tm(&dynamic_t, &t, -1);
                 break;
             case key_escape:
                 erase();
@@ -593,6 +574,10 @@ static void statistics_screen(Interval *intervals, Category *categories, int int
         "[Esc] Exit"
     };
 
+    const char day_title[] = "DAY";
+    const char month_title[] = "MONTH";
+    const char year_title[] = "YEAR";
+
     int bar_count = sizeof(bar_items) / sizeof(bar_items[0]);
 
     while(1) {
@@ -605,13 +590,19 @@ static void statistics_screen(Interval *intervals, Category *categories, int int
         int key = getch();
         switch(key) {
             case 'd':
-                day_stats(intervals, categories, interval_count, y, x);
+                stats(intervals, categories, interval_count, y, x,
+                        day_title, display_day_line, get_yday,
+                        update_day, get_day_total_time);
                 break;
             case 'm':
-                month_stats(intervals, categories, interval_count, y, x);
+                stats(intervals, categories, interval_count, y, x,
+                        month_title, display_month_line, get_month,
+                        update_month, get_month_total_time);
                 break;
             case 'y':
-                year_stats(intervals, categories, interval_count, y, x);
+                stats(intervals, categories, interval_count, y, x,
+                        year_title, display_year_line, get_year,
+                        update_year, get_year_total_time);
                 break;
             case key_escape:
                 erase();
