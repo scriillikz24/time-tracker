@@ -25,7 +25,8 @@ enum {
     minutes_in_hour = 60,
     days_in_year = 366,
     days_in_week = 7,
-    months_in_year = 12
+    months_in_year = 12,
+    min_time = 300 // in seconds
 };
 
 enum {
@@ -84,10 +85,16 @@ static void print_time(WINDOW *win, Interval *interval, Category *categories, in
     wattron(win, A_BOLD);
     mvwprintw(win, 1, (width - strlen(category)) / 2, "%s", category);
     wattroff(win, A_BOLD);
+    mvwprintw(win, height - 4, (width - 4) / 2, "%02d:%02d", minutes, seconds);
+    char msg[name_max_length] = {0};
+    if(time(NULL) - interval->start < min_time)
+        strncpy(msg, "[Esc] Give Up!", name_max_length - 1);
+    else
+        strncpy(msg, "[Esc] Stop", name_max_length - 1);
+    mvwhline(win, height - 2, 1, ' ', width - 2);
     wattron(win, COLOR_PAIR(3));
-    mvwprintw(win, 1, 1, "%s", ESC_HINT);
+    mvwprintw(win, height - 2, (width - strlen(msg)) / 2, "%s", msg);
     wattroff(win, COLOR_PAIR(3));
-    mvwprintw(win, height - 2, (width - 4) / 2, "%02d:%02d", minutes, seconds);
     wrefresh(win);
 }
 
@@ -185,6 +192,98 @@ static void delete_interval(Interval *intervals, int *count, int idx)
     (*count)--;
 }
 
+typedef void (*print_query)(WINDOW*, const char*, int);
+
+static void print_exit_query(
+        WINDOW *win,
+        const char *action_string,
+        int width
+        )
+{
+    wattron(win, COLOR_PAIR(3)); 
+    mvwaddstr(win, 3, (width - 33) / 2,
+            "Are you sure you want to "); // 33 is the length of the string
+    wattroff(win, COLOR_PAIR(3)); 
+    wattron(win, COLOR_PAIR(5)); 
+    wprintw(win, "%s", action_string);
+    wattroff(win, COLOR_PAIR(5)); 
+    wattron(win, COLOR_PAIR(3)); 
+    waddch(win, '?');
+    wattroff(win, COLOR_PAIR(3)); 
+}
+
+static void print_delete_query(
+        WINDOW *win,
+        const char *category_name,
+        int width)
+{
+    wattron(win, COLOR_PAIR(3)); 
+    mvwprintw(win, 3, (width - 32) / 2,
+            "Are you sure you want to delete:"); // 32 is the length of the string
+    wattroff(win, COLOR_PAIR(3)); 
+    
+    mvwprintw(win, 4, (width - strlen(category_name) - 2) / 2,
+            "'%s'?", category_name);
+}
+
+static bool confirm_action(
+        print_query print_qr,
+        const char *query_msg)
+{
+    int rows, cols;
+    getmaxyx(stdscr, rows, cols);
+    clear();
+    refresh();
+
+    int height = 8;
+    int width = 50;
+    int start_y = (rows - height) / 2;
+    int start_x = (cols - width) / 2;
+
+    WINDOW *win = newwin(height, width, start_y, start_x);
+    keypad(win, TRUE);
+    
+    box(win, 0, 0); 
+
+    wattron(win, COLOR_PAIR(3)); 
+    mvwprintw(win, 1, 2, ESC_HINT);
+    wattroff(win, COLOR_PAIR(3)); 
+
+    // 4. Draw Content
+    wattron(win, A_BOLD);
+    mvwprintw(win, 1, (width - 14) / 2, " CONFIRMATION "); // 14 here is the length of the string passed
+    wattroff(win, A_BOLD);
+
+    print_qr(win, query_msg, width);
+
+    // Drawing "Buttons"
+    int btn_y = 6;
+    
+    wattron(win, COLOR_PAIR(3));
+    mvwaddstr(win, btn_y, (width / 2) - 10, "[Y]es");
+    wattroff(win, COLOR_PAIR(3));
+
+    mvwaddstr(win, btn_y, (width / 2) + 5, "[N]o");
+
+    wrefresh(win);
+
+    // 5. Input Loop
+    bool result = false;
+    while (1) {
+        int ch = wgetch(win);
+        if (ch == 'y' || ch == 'Y') {
+            result = true;
+            break;
+        } else if (ch == 'n' || ch == 'N' || ch == key_escape) {
+            result = false;
+            break;
+        }
+    }
+
+    delwin(win);
+    return result;
+}
+
 static void categories_dashboard(Category *categories, int *category_count, int *chosen)
 {
     erase(); 
@@ -221,34 +320,37 @@ static void categories_dashboard(Category *categories, int *category_count, int 
         int key;
         key = getch();
         switch(key) {
-            case CMD_CREATE:
-                add_category(categories, category_count);
-                break;
-            case CMD_DELETE:
+        case CMD_CREATE:
+            add_category(categories, category_count);
+            break;
+        case CMD_DELETE:
+
+            if(*category_count > 0
+                    && confirm_action(print_delete_query, categories[highlight].name))     
                 delete_category(categories, category_count, highlight);
-                if(highlight >= (*category_count))
-                    highlight = *category_count - 1;
-                erase(); 
-                refresh();
-                break;
-            case 'k':
-            case KEY_UP:
-                if(highlight > 0) highlight--;
-                break;
-            case 'j':
-            case KEY_DOWN:
-                if(highlight < *category_count - 1) highlight++;
-                break;
-            case key_enter:
-                clear();
-                refresh();
-                *chosen = highlight;
-                return;
-            case key_escape:
-                clear();
-                refresh();
-                *chosen = -1;
-                return;
+            if(highlight >= (*category_count))
+                highlight = *category_count - 1;
+            erase(); 
+            refresh();
+            break;
+        case 'k':
+        case KEY_UP:
+            if(highlight > 0) highlight--;
+            break;
+        case 'j':
+        case KEY_DOWN:
+            if(highlight < *category_count - 1) highlight++;
+            break;
+        case key_enter:
+            clear();
+            refresh();
+            *chosen = highlight;
+            return;
+        case key_escape:
+            clear();
+            refresh();
+            *chosen = -1;
+            return;
         }
     }
 }
@@ -674,10 +776,13 @@ static void active_screen(Interval *interval, Category *categories)
     int rows, cols;
     getmaxyx(stdscr, rows, cols);
 
-    int height = 5;
+    int height = 7;
     int width = name_max_length + 3; // +2 for padding
     int start_y = (rows - height) / 2;
     int start_x = (cols - width) / 2;
+
+    const char stop_msg[] = "stop";
+    const char giveup_message[] = "give up";
 
     WINDOW *win = newwin(height, width, start_y, start_x);
     keypad(win, TRUE);
@@ -690,10 +795,18 @@ static void active_screen(Interval *interval, Category *categories)
         int key = getch();
         if(key == key_escape || key == 'q') {
             interval->end = time(NULL);
-            werase(win);
-            wrefresh(win);
-            delwin(win);
-            return;
+            if(interval->end - interval->start < min_time) {
+                if(confirm_action(print_exit_query, giveup_message)) {
+                    delwin(win);
+                    return;
+                }
+            } else if(confirm_action(print_exit_query, stop_msg)) {
+                delwin(win);
+                return;
+            }
+            erase();
+            refresh();
+            interval->end = 0;
         }
     }
 }
@@ -728,8 +841,14 @@ static void main_screen(Interval *intervals, int *interval_count, Category *cate
         int key = getch();
         switch(key) {
             case CMD_START:
-                if(start_interval(intervals, interval_count, categories, category_count))
-                    active_screen(&intervals[*interval_count - 1], categories);
+                if(start_interval(intervals, interval_count, 
+                            categories, category_count)) {
+                    active_screen
+                        (&intervals[*interval_count - 1], categories);
+                    erase();
+                    refresh();
+                }
+
                 break;
             case CMD_CATEGORY:
                 int option;
