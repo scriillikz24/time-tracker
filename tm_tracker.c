@@ -24,6 +24,7 @@ enum {
     bar_height = 3,
     minutes_in_hour = 60,
     days_in_year = 366,
+    days_in_week = 7,
     months_in_year = 12
 };
 
@@ -454,12 +455,33 @@ static int get_year_total_time(Interval *intervals, Category *categories, int in
     return total;
 }
 
+static int get_week_total_time(Interval *intervals, Category *categories, int interval_count, int monday)
+{
+    int total = 0;
+    for(int i = 0; i < interval_count; i++) {
+        int interval_start_day = localtime(&intervals[i].start)->tm_yday;
+        if(interval_start_day >= monday && interval_start_day <= monday + days_in_week - 1) {
+            total += intervals[i].end - intervals[i].start;
+        }
+    }
+    return total;
+}
+
 typedef int (*get_total_func)(Interval*, Category*, int, int);
 typedef void(*update_time)(struct tm*, struct tm*, int);
 typedef int(*get_total_target)(struct tm*);
 typedef void(*display_date_line)(struct tm*, int, int);
 
 static int get_yday(struct tm *dynamic_t) { return dynamic_t->tm_yday; }
+
+static int get_week_monday(struct tm *dynamic_t)
+{
+    int days_since_monday = (dynamic_t->tm_wday + days_in_week - 1) % days_in_week;
+    struct tm monday = *dynamic_t;
+    monday.tm_mday -= days_since_monday;
+    mktime(&monday); 
+    return monday.tm_yday;
+}
 
 static int get_month(struct tm *dynamic_t) { return dynamic_t->tm_mon; }
 
@@ -491,6 +513,15 @@ static void update_day(struct tm *dynamic_t, struct tm *t, int step)
         (dynamic_t->tm_mday) -= step;
 }
 
+static void update_week(struct tm *dynamic_t, struct tm *t, int step)
+{
+    dynamic_t->tm_mday += step * days_in_week;
+    mktime(dynamic_t);
+    if(dynamic_t->tm_yday > t->tm_yday 
+            && dynamic_t->tm_year == t->tm_year)
+        dynamic_t->tm_mday -= step * days_in_week;
+}
+
 static void display_year_line(struct tm *dynamic_t, int y, int x)
 {
     attron(COLOR_PAIR(3));
@@ -509,6 +540,21 @@ static void display_day_line(struct tm *dynamic_t, int y, int x)
 {
     attron(COLOR_PAIR(3));
     mvprintw(y + 2, x, "<- %02d/%02d/%d ->", dynamic_t->tm_mday, dynamic_t->tm_mon + 1, dynamic_t->tm_year + 1900);
+    attroff(COLOR_PAIR(3));
+}
+
+static void display_week_line(struct tm *dynamic_t, int y, int x)
+{
+    int days_since_monday = (dynamic_t->tm_wday + days_in_week - 1) % days_in_week;
+    int days_until_sunday = (days_in_week - dynamic_t->tm_wday) % days_in_week;
+    struct tm monday = *dynamic_t;
+    struct tm sunday = *dynamic_t;
+    monday.tm_mday -= days_since_monday;
+    sunday.tm_mday += days_until_sunday;
+    mktime(&sunday);
+    mktime(&monday);
+    attron(COLOR_PAIR(3));
+    mvprintw(y + 2, x, "<- %02d/%02d-%02d/%02d ->", monday.tm_mday, monday.tm_mon + 1, sunday.tm_mday, sunday.tm_mon + 1);
     attroff(COLOR_PAIR(3));
 }
 
@@ -547,9 +593,11 @@ static void stats(
 
         int key = getch();
         switch(key) {
+            case 'l':
             case KEY_RIGHT:
                 update_tm(&dynamic_t, &t, 1);
                 break;
+            case 'h':
             case KEY_LEFT:
                 update_tm(&dynamic_t, &t, -1);
                 break;
@@ -571,12 +619,14 @@ static void statistics_screen(Interval *intervals, Category *categories, int int
         "[d] Day",
         "[m] Month",
         "[y] Year",
+        "[w] Week",
         "[Esc] Exit"
     };
 
     const char day_title[] = "DAY";
     const char month_title[] = "MONTH";
     const char year_title[] = "YEAR";
+    const char week_title[] = "WEEK";
 
     int bar_count = sizeof(bar_items) / sizeof(bar_items[0]);
 
@@ -603,6 +653,11 @@ static void statistics_screen(Interval *intervals, Category *categories, int int
                 stats(intervals, categories, interval_count, y, x,
                         year_title, display_year_line, get_year,
                         update_year, get_year_total_time);
+                break;
+            case 'w':
+                stats(intervals, categories, interval_count, y, x,
+                        week_title, display_week_line, get_week_monday,
+                        update_week, get_week_total_time);
                 break;
             case key_escape:
                 erase();
