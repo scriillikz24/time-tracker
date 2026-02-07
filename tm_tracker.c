@@ -66,12 +66,12 @@ static void action_bar(const char **bar_items, int bar_count)
     attron(COLOR_PAIR(3)); 
     mvhline(y_pos - 1, 0, ACS_HLINE, cols); 
     mvhline(y_pos + 1, 0, ACS_HLINE, cols); 
-    attroff(COLOR_PAIR(3));
     
     for(int i = 0; i < bar_count; i++) {
         mvaddstr(y_pos, x_offset, bar_items[i]);
         x_offset += strlen(bar_items[i]) + bar_gap;
     }
+    attroff(COLOR_PAIR(3));
     refresh();
 }
 
@@ -156,9 +156,9 @@ static bool get_text_input(char *buffer, int max_len) {
     return true;
 }
 
-static void print_category_item(Category *category, int y, int x, bool highlighted) {
+static void print_category_item(char *name, int y, int x, bool highlighted) {
     if(!highlighted) attron(COLOR_PAIR(3)); 
-    mvprintw(y, x, "%c %s", highlighted ? '>' : ' ', category->name);
+    mvprintw(y, x, "%c %s", highlighted ? '>' : '-', name);
     if(!highlighted) attroff(COLOR_PAIR(3)); 
 }
 
@@ -291,10 +291,9 @@ static void categories_dashboard(Category *categories, int *category_count, int 
     refresh();
     int highlight = 0;
 
-    int r, c;
-    getmaxyx(stdscr, r, c);
-    int y = r / 2;
-    int x = c / 2;
+    int row, col;
+    getmaxyx(stdscr, row, col);
+    int y = row / 2;
 
     static const char *bar_items[] = {
         "[a] Add",
@@ -305,17 +304,22 @@ static void categories_dashboard(Category *categories, int *category_count, int 
     int bar_count = sizeof(bar_items) / sizeof(bar_items[0]);
 
     while(1) {
+        char dashboard_buff[] = "CATEGORIES DASHBOARD";
+        int dashb_buff_len = strlen(dashboard_buff);
+
         attron(A_BOLD);
-        mvprintw(y - 3, x, "CATEGORIES DASHBOARD");
+        mvaddstr(y - 2, (col - dashb_buff_len) / 2, dashboard_buff);
         attroff(A_BOLD);
 
         action_bar(bar_items, bar_count);
 
-        if(*category_count == 0)
-            mvprintw(y, x, "-- Nothing to display yet --");
+        if(*category_count == 0) {
+            char buff[] = "No categories";
+            mvaddstr(y, (col - strlen(buff)) / 2, buff);
+        }
 
         for(int i = 0; i < *category_count; i++) {
-            print_category_item(&categories[i], y + i, x, i == highlight);
+            print_category_item(categories[i].name, y + i, (col - dashb_buff_len) / 2, i == highlight);
         }
 
         int key;
@@ -602,8 +606,17 @@ typedef int (*get_total_func)(Interval*, Category*, int, int);
 typedef void(*update_time)(struct tm*, struct tm*, int);
 typedef int(*get_total_target)(struct tm*);
 typedef void(*display_date_line)(struct tm*, int, int);
+typedef void(*display_catgs_distribution)(struct tm*);
+
+static void day_distribution(Interval *intervals,
+        Category *categories,
+        int interval_count,
+        int yday)
+{
+}
 
 static int get_yday(struct tm *dynamic_t) { return dynamic_t->tm_yday; }
+
 
 static int get_week_monday(struct tm *dynamic_t)
 {
@@ -653,39 +666,53 @@ static void update_week(struct tm *dynamic_t, struct tm *t, int step)
         dynamic_t->tm_mday -= step * days_in_week;
 }
 
-static void display_year_line(struct tm *dynamic_t, int y, int x)
+static void display_year_line(struct tm *dynamic_t, int y, int col)
 {
+    char buff[50];
+    int len = snprintf(buff, sizeof(buff), "<- %d ->", dynamic_t->tm_year + 1900);
     attron(COLOR_PAIR(3));
-    mvprintw(y + 2, x, "<- %d ->", dynamic_t->tm_year + 1900);
+    mvaddstr(y + 2, (col - len) / 2, buff);
     attroff(COLOR_PAIR(3));
 }
 
-static void display_month_line(struct tm *dynamic_t, int y, int x)
+static void display_month_line(struct tm *dynamic_t, int y, int col)
 {
+    char buff[50];
+    int len = snprintf(buff, sizeof(buff), "<- %02d/%d ->", dynamic_t->tm_mon + 1, dynamic_t->tm_year + 1900);
     attron(COLOR_PAIR(3));
-    mvprintw(y + 2, x, "<- %02d/%d ->", dynamic_t->tm_mon + 1, dynamic_t->tm_year + 1900);
+    mvaddstr(y + 2, (col - len) / 2, buff);
     attroff(COLOR_PAIR(3));
 }
 
-static void display_day_line(struct tm *dynamic_t, int y, int x)
+static void display_day_line(struct tm *dynamic_t, int y, int col)
 {
+    char buff[50];
+    int len = snprintf(buff, sizeof(buff), "<- %02d/%02d/%d ->", dynamic_t->tm_mday,
+            dynamic_t->tm_mon + 1, dynamic_t->tm_year + 1900);
     attron(COLOR_PAIR(3));
-    mvprintw(y + 2, x, "<- %02d/%02d/%d ->", dynamic_t->tm_mday, dynamic_t->tm_mon + 1, dynamic_t->tm_year + 1900);
+    mvaddstr(y + 2, (col - len) / 2, buff);
     attroff(COLOR_PAIR(3));
 }
 
-static void display_week_line(struct tm *dynamic_t, int y, int x)
+static void display_week_line(struct tm *dynamic_t, int y, int col)
 {
     int days_since_monday = (dynamic_t->tm_wday + days_in_week - 1) % days_in_week;
     int days_until_sunday = (days_in_week - dynamic_t->tm_wday) % days_in_week;
+
     struct tm monday = *dynamic_t;
     struct tm sunday = *dynamic_t;
+
     monday.tm_mday -= days_since_monday;
     sunday.tm_mday += days_until_sunday;
     mktime(&sunday);
     mktime(&monday);
+
+    char buff[50];
+    int len = snprintf(buff, sizeof(buff),"<- %02d/%02d-%02d/%02d ->",
+            monday.tm_mday, monday.tm_mon + 1, sunday.tm_mday,
+            sunday.tm_mon + 1);
     attron(COLOR_PAIR(3));
-    mvprintw(y + 2, x, "<- %02d/%02d-%02d/%02d ->", monday.tm_mday, monday.tm_mon + 1, sunday.tm_mday, sunday.tm_mon + 1);
+    mvaddstr(y + 2, (col - len) / 2, buff);
     attroff(COLOR_PAIR(3));
 }
 
@@ -693,12 +720,11 @@ static void stats(
         Interval *intervals,
         Category *categories,
         int interval_count,
-        int y,
-        int x,
         const char *title,
         display_date_line display_line,
         get_total_target get_target,
         update_time update_tm,
+        display_catgs_distribution display_distribution,
         get_total_func get_total)
 {
     erase();
@@ -707,19 +733,35 @@ static void stats(
     struct tm t = *localtime(&now);
     struct tm dynamic_t = t;
 
+    int row, col;
+    getmaxyx(stdscr, row, col);
+    int y = (row - bar_height) / 2;
+
     while(1) {
         mktime(&dynamic_t);
         int total = get_total(intervals, categories,
                 interval_count, get_target(&dynamic_t));
 
+        char stats_buff[100]; // Plenty of space for string
+        int buff_len = snprintf(stats_buff, sizeof(stats_buff),
+                "%s STATS", title);
+
         attron(A_BOLD);
-        mvprintw(y, x, "---- %s STATS ----", title);
+        mvaddstr(y, (col - buff_len) / 2, stats_buff);
         attroff(A_BOLD);
 
-        display_line(&dynamic_t, y, x);
-        mvprintw(y + 4, x, "Total: %02dm%02ds",
+        display_line(&dynamic_t, y, col);
+
+        display_categories_distribution()
+
+
+        char total_buff[50];
+        int total_buff_len = snprintf(total_buff,
+                sizeof(total_buff),
+                "Total: %02dm%02ds",
                 total / minutes_in_hour,
                 total % minutes_in_hour);
+        mvaddstr(y + 4, (col - total_buff_len) / 2, total_buff);
         refresh();
 
         int key = getch();
@@ -741,7 +783,7 @@ static void stats(
 
 }
 
-static void statistics_screen(Interval *intervals, Category *categories, int interval_count, int y, int x)
+static void statistics_screen(Interval *intervals, Category *categories, int interval_count)
 {
     erase();
     refresh();
@@ -754,6 +796,10 @@ static void statistics_screen(Interval *intervals, Category *categories, int int
         "[Esc] Exit"
     };
 
+    int row, col;
+    getmaxyx(stdscr, row, col);
+    int start_y = (row - bar_height) / 2;
+
     const char month_title[] = "MONTH";
     const char year_title[] = "YEAR";
     const char week_title[] = "WEEK";
@@ -761,8 +807,11 @@ static void statistics_screen(Interval *intervals, Category *categories, int int
     int bar_count = sizeof(bar_items) / sizeof(bar_items[0]);
 
     while(1) {
+        const char stats_screen_buff[] = "STATISTICS SCREEN";
+        int buff_len = strlen(stats_screen_buff);
+
         attron(A_BOLD);
-        mvaddstr(y - 2, x, "-- STATISTICS SCREEN --");
+        mvaddstr(start_y, (col - buff_len) / 2, stats_screen_buff);
         attroff(A_BOLD);
 
         action_bar(bar_items, bar_count);
@@ -770,23 +819,27 @@ static void statistics_screen(Interval *intervals, Category *categories, int int
         int key = getch();
         switch(key) {
             case 'd':
-                stats(intervals, categories, interval_count, y, x,
-                        DAY_TITLE, display_day_line, get_yday,
+                stats(intervals, categories,
+                        interval_count, DAY_TITLE,
+                        display_day_line, get_yday,
                         update_day, get_day_total_time);
                 break;
             case 'm':
-                stats(intervals, categories, interval_count, y, x,
-                        month_title, display_month_line, get_month,
+                stats(intervals, categories,
+                        interval_count, month_title,
+                        display_month_line, get_month,
                         update_month, get_month_total_time);
                 break;
             case 'y':
-                stats(intervals, categories, interval_count, y, x,
-                        year_title, display_year_line, get_year,
+                stats(intervals, categories,
+                        interval_count, year_title,
+                        display_year_line, get_year,
                         update_year, get_year_total_time);
                 break;
             case 'w':
-                stats(intervals, categories, interval_count, y, x,
-                        week_title, display_week_line, get_week_monday,
+                stats(intervals, categories,
+                        interval_count, week_title,
+                        display_week_line, get_week_monday,
                         update_week, get_week_total_time);
                 break;
             case key_escape:
@@ -862,14 +915,13 @@ static void main_screen(Interval *intervals,
     getmaxyx(stdscr, row, col);
 
     int start_y = (row - bar_height) / 2;
-    int start_x = col / 2;
 
     time_t now = time(NULL);
 
     while(1) {
-        char main_screen_buffer[] = "-- MAIN SCREEN --";
+        char main_screen_buffer[] = "MAIN SCREEN";
         attron(A_BOLD);
-        mvaddstr(start_y,
+        mvaddstr(start_y - 2,
                 (col - strlen(main_screen_buffer)) / 2,
                 main_screen_buffer);
         attroff(A_BOLD);
@@ -912,8 +964,7 @@ static void main_screen(Interval *intervals,
                     interval_count, *category_count);
             break;
         case CMD_STATS:
-            statistics_screen(intervals, categories,
-                    *interval_count, start_y, start_x);
+            statistics_screen(intervals, categories, *interval_count);
             break;
         case key_escape:
             push(categories, sizeof(Category),
