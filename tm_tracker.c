@@ -11,6 +11,7 @@
 #define CATEGORIES_FILE ".categories.dat"
 #define INTERVALS_FILE ".intervals.dat"
 #define ESC_HINT "<- Esc"
+#define DAY_TITLE "DAY"
 
 enum {
     name_max_length = 30,
@@ -23,10 +24,11 @@ enum {
     bar_gap = 4,
     bar_height = 3,
     minutes_in_hour = 60,
+    seconds_in_minute = 60,
     days_in_year = 366,
     days_in_week = 7,
     months_in_year = 12,
-    min_time = 300 // in seconds
+    min_time = 5 // in seconds
 };
 
 enum {
@@ -400,7 +402,7 @@ static void history_dashboard(Interval *intervals,
 
     int r, c;
     getmaxyx(stdscr, r, c);
-    int start_y = (r - 5) / 2;
+    int start_y = (r - *interval_count) / 2;
     int start_x = (c - name_max_length) / 2;
 
     static const char *bar_items[] = {
@@ -438,26 +440,29 @@ static void history_dashboard(Interval *intervals,
         int key;
         key = getch();
         switch(key) {
-            case CMD_DELETE:
-                delete_interval(intervals, interval_count, highlight);
-                if(highlight >= (*interval_count))
-                    highlight = *interval_count - 1;
-                erase(); 
-                refresh();
-                break;
-            case 'k':
-            case KEY_UP:
-                if(highlight > 0) highlight--;
-                break;
-            case 'j':
-            case KEY_DOWN:
-                if(highlight < *interval_count - 1) highlight++;
-                break;
-            case key_escape:
-                clear();
-                refresh();
-                timeout(default_timeout);
-                return;
+        case CMD_DELETE:
+            delete_interval(intervals, interval_count, highlight);
+            if(highlight >= (*interval_count))
+                highlight = *interval_count - 1;
+            erase(); 
+            refresh();
+            break;
+        case 'k':
+        case KEY_UP:
+            if(*interval_count > 0)
+                highlight = (highlight - 1 + *interval_count) %
+                    *interval_count;
+            break;
+        case 'j':
+        case KEY_DOWN:
+            if(*interval_count > 0)
+                highlight = (highlight + 1) % *interval_count;
+            break;
+        case key_escape:
+            clear();
+            refresh();
+            timeout(default_timeout);
+            return;
         }
     }
 }
@@ -471,9 +476,11 @@ static bool start_interval(Interval *intervals, int *interval_count, Category *c
     getmaxyx(stdscr, rows, cols);
 
     char message[100]; // Length of message below
-    snprintf(message, sizeof(message), "Cannot have more than %d intervals. Press any key to return.", max_intervals);
+    int mes_len = snprintf(message, sizeof(message),
+            "Cannot have more than %d intervals.",
+            max_intervals);
     if(*interval_count >= max_intervals) {
-        mvprintw(rows / 2, (cols - strlen(message)) / 2, "%s", message);
+        mvprintw(rows / 2, (cols - mes_len) / 2, "%s", message);
         getch();
         return false;
     }
@@ -747,7 +754,6 @@ static void statistics_screen(Interval *intervals, Category *categories, int int
         "[Esc] Exit"
     };
 
-    const char day_title[] = "DAY";
     const char month_title[] = "MONTH";
     const char year_title[] = "YEAR";
     const char week_title[] = "WEEK";
@@ -765,7 +771,7 @@ static void statistics_screen(Interval *intervals, Category *categories, int int
         switch(key) {
             case 'd':
                 stats(intervals, categories, interval_count, y, x,
-                        day_title, display_day_line, get_yday,
+                        DAY_TITLE, display_day_line, get_yday,
                         update_day, get_day_total_time);
                 break;
             case 'm':
@@ -791,7 +797,9 @@ static void statistics_screen(Interval *intervals, Category *categories, int int
     }
 }
 
-static void active_screen(Interval *interval, Category *categories)
+static void active_screen(Interval *interval,
+        Category *categories,
+        int *interval_count)
 {
     erase();
     refresh();
@@ -804,7 +812,7 @@ static void active_screen(Interval *interval, Category *categories)
     int start_x = (cols - width) / 2;
 
     const char stop_msg[] = "stop";
-    const char giveup_message[] = "give up";
+    const char giveup_msg[] = "give up";
 
     WINDOW *win = newwin(height, width, start_y, start_x);
     keypad(win, TRUE);
@@ -813,12 +821,13 @@ static void active_screen(Interval *interval, Category *categories)
     
     while(1) {
         print_time(win, interval, categories, height, width);
+        interval->end = time(NULL);
 
         int key = getch();
         if(key == key_escape || key == 'q') {
-            interval->end = time(NULL);
             if(interval->end - interval->start < min_time) {
-                if(confirm_action(print_exit_query, giveup_message)) {
+                if(confirm_action(print_exit_query, giveup_msg)) {
+                    (*interval_count)--; // Deleting
                     delwin(win);
                     return;
                 }
@@ -828,12 +837,14 @@ static void active_screen(Interval *interval, Category *categories)
             }
             erase();
             refresh();
-            interval->end = 0;
         }
     }
 }
 
-static void main_screen(Interval *intervals, int *interval_count, Category *categories, int *category_count)
+static void main_screen(Interval *intervals,
+        int *interval_count,
+        Category *categories,
+        int *category_count)
 {
     timeout(default_timeout);
 
@@ -847,46 +858,70 @@ static void main_screen(Interval *intervals, int *interval_count, Category *cate
 
     int bar_count = sizeof(bar_items) / sizeof(bar_items[0]);
 
-    int r, c;
-    getmaxyx(stdscr, r, c);
+    int row, col;
+    getmaxyx(stdscr, row, col);
 
-    int start_y = (r - bar_height) / 2;
-    int start_x = c / 2;
+    int start_y = (row - bar_height) / 2;
+    int start_x = col / 2;
+
+    time_t now = time(NULL);
 
     while(1) {
+        char main_screen_buffer[] = "-- MAIN SCREEN --";
         attron(A_BOLD);
-        mvaddstr(start_y, start_x, "-- MAIN SCREEN --");
+        mvaddstr(start_y,
+                (col - strlen(main_screen_buffer)) / 2,
+                main_screen_buffer);
         attroff(A_BOLD);
+
+        int day_total = get_day_total_time(intervals,
+                categories,
+                *interval_count,
+                localtime(&now)->tm_yday);
+        int mins_total = day_total / seconds_in_minute; 
+        int secs_total = day_total % seconds_in_minute;
+
+        char buffer[100]; // Plenty of space for formatted message
+        int buff_len = snprintf(buffer, sizeof(buffer),
+                "You have focused for %dm%ds today",
+                mins_total, secs_total);
+
+        mvaddstr(start_y + 2, (col - buff_len) / 2, buffer);
 
         action_bar(bar_items, bar_count);
 
         int key = getch();
         switch(key) {
-            case CMD_START:
-                if(start_interval(intervals, interval_count, 
-                            categories, category_count)) {
-                    active_screen
-                        (&intervals[*interval_count - 1], categories);
-                    erase();
-                    refresh();
-                }
-
-                break;
-            case CMD_CATEGORY:
-                int option;
-                categories_dashboard(categories, category_count, &option);
-                break;
-            case CMD_HISTORY:
-                history_dashboard(intervals, categories, interval_count, *category_count);
-                break;
-            case CMD_STATS:
-                statistics_screen(intervals, categories, *interval_count, start_y, start_x);
-                break;
-            case key_escape:
-                push(categories, sizeof(Category), *category_count, CATEGORIES_FILE);
-                push(intervals, sizeof(Interval), *interval_count, INTERVALS_FILE);
-                endwin();
-                exit(0);
+        case CMD_START:
+            if(start_interval(intervals, interval_count, 
+                        categories, category_count)) {
+                active_screen
+                    (&intervals[*interval_count - 1],
+                     categories,
+                     interval_count);
+                erase();
+                refresh();
+            }
+            break;
+        case CMD_CATEGORY:
+            int option;
+            categories_dashboard(categories, category_count, &option);
+            break;
+        case CMD_HISTORY:
+            history_dashboard(intervals, categories,
+                    interval_count, *category_count);
+            break;
+        case CMD_STATS:
+            statistics_screen(intervals, categories,
+                    *interval_count, start_y, start_x);
+            break;
+        case key_escape:
+            push(categories, sizeof(Category),
+                    *category_count, CATEGORIES_FILE);
+            push(intervals, sizeof(Interval),
+                    *interval_count, INTERVALS_FILE);
+            endwin();
+            exit(0);
         }
     }
 }
