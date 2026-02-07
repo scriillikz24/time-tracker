@@ -179,8 +179,7 @@ static void add_category(Category *categories, int *category_count)
 
 static void delete_category(Category *categories, int *category_count, int idx)
 {
-    int i;
-    for(i = idx; i < (*category_count) - 1; i++)
+    for(int i = idx; i < (*category_count) - 1; i++)
         categories[i] = categories[i+1];
     (*category_count)--;
 }
@@ -324,7 +323,6 @@ static void categories_dashboard(Category *categories, int *category_count, int 
             add_category(categories, category_count);
             break;
         case CMD_DELETE:
-
             if(*category_count > 0
                     && confirm_action(print_delete_query, categories[highlight].name))     
                 delete_category(categories, category_count, highlight);
@@ -355,26 +353,46 @@ static void categories_dashboard(Category *categories, int *category_count, int 
     }
 }
 
-static void print_interval_item(Interval *interval, Category *categories, int y, int x, bool highlighted)
+static void print_history_item(Interval *interval,
+        Category *categories,
+        int category_count,
+        int y, int x,
+        bool highlighted)
 {
     time_t time_focused = interval->end - interval->start;
+
     struct tm *start = localtime(&interval->start);
     int start_h = start->tm_hour;
     int start_m = start->tm_min;
     int start_month = start->tm_mon + 1; 
     int start_day = start->tm_mday;
+
     struct tm *end = localtime(&interval->end);
     int end_h = end->tm_hour;
     int end_m = end->tm_min;
+
     int minutes_focused = time_focused / 60;
     int seconds_focused = time_focused % 60;
+
+    char category_name[name_max_length] = {0};
+
     if(!highlighted) attron(COLOR_PAIR(3));
-    mvprintw(y, x, "%c %s: [%02d/%02d]%02d:%02d-%02d:%02d(%02dm%02ds)", highlighted ? '>' : '-', categories[interval->category_idx].name,
-            start_day, start_month, start_h, start_m, end_h, end_m, minutes_focused, seconds_focused);
+    if(interval->category_idx >= category_count)
+        strncpy(category_name, "[DELETED]", name_max_length);
+    else
+        strncpy(category_name, categories[interval->category_idx].name, name_max_length);
+    mvprintw(y, x, "%c %s: [%02d/%02d]%02d:%02d-%02d:%02d(%02dm%02ds)",
+            highlighted ? '>' : '-',
+            category_name,
+            start_day, start_month, start_h, start_m,
+            end_h, end_m, minutes_focused, seconds_focused);
     if(!highlighted) attroff(COLOR_PAIR(3));
 }
 
-static void history_dashboard(Interval *intervals, Category *categories, int *interval_count)
+static void history_dashboard(Interval *intervals,
+        Category *categories, 
+        int *interval_count,
+        int category_count)
 {
     timeout(-1);
     erase();
@@ -411,7 +429,11 @@ static void history_dashboard(Interval *intervals, Category *categories, int *in
         }
 
         for(int i = 0; i < *interval_count; i++)
-            print_interval_item(&intervals[i], categories, start_y + i, start_x, i == highlight);
+            print_history_item(&intervals[i],
+                    categories,
+                    category_count,
+                    start_y + i, start_x,
+                    i == highlight);
 
         int key;
         key = getch();
@@ -855,7 +877,7 @@ static void main_screen(Interval *intervals, int *interval_count, Category *cate
                 categories_dashboard(categories, category_count, &option);
                 break;
             case CMD_HISTORY:
-                history_dashboard(intervals, categories, interval_count);
+                history_dashboard(intervals, categories, interval_count, *category_count);
                 break;
             case CMD_STATS:
                 statistics_screen(intervals, categories, *interval_count, start_y, start_x);
