@@ -372,6 +372,7 @@ static void print_history_item(Interval *interval,
     int start_m = start->tm_min;
     int start_month = start->tm_mon + 1; 
     int start_day = start->tm_mday;
+    int start_year = start->tm_year + 1900;
 
     struct tm *end = localtime(&interval->end);
     int end_h = end->tm_hour;
@@ -387,11 +388,13 @@ static void print_history_item(Interval *interval,
         strncpy(category_name, "[DELETED]", name_max_length);
     else
         strncpy(category_name, categories[interval->category_idx].name, name_max_length);
-    mvprintw(y, x, "%c %s: [%02d/%02d]%02d:%02d-%02d:%02d(%02dm%02ds)",
+    mvprintw(y, x, "%c %s: [%02d/%02d/%d]%02d:%02d-%02d:%02d(%02dm%02ds)",
             highlighted ? '>' : '-',
             category_name,
-            start_day, start_month, start_h, start_m,
-            end_h, end_m, minutes_focused, seconds_focused);
+            start_day, start_month, start_year,
+            start_h, start_m,
+            end_h, end_m, minutes_focused,
+            seconds_focused);
     if(!highlighted) attroff(COLOR_PAIR(3));
 }
 
@@ -606,17 +609,69 @@ typedef int (*get_total_func)(Interval*, Category*, int, int);
 typedef void(*update_time)(struct tm*, struct tm*, int);
 typedef int(*get_total_target)(struct tm*);
 typedef void(*display_date_line)(struct tm*, int, int);
-typedef void(*display_catgs_distribution)(struct tm*);
+typedef int(*get_interval_target)(Interval *interval);
 
-static void day_distribution(Interval *intervals,
+static int get_interval_day(Interval *interval)
+{
+    return localtime(&interval->start)->tm_yday; 
+}
+
+static int get_interval_month(Interval *interval)
+{
+    return localtime(&interval->start)->tm_mon; 
+}
+
+static int get_interval_year(Interval *interval)
+{
+    return localtime(&interval->start)->tm_year; 
+}
+
+static void get_distribution(Interval *intervals,
         Category *categories,
         int interval_count,
-        int yday)
+        int category_count,
+        int target,
+        struct tm dynamic_t,
+        int y, int x,
+        get_interval_target get_target)
 {
+    typedef struct Pair {
+        char category[name_max_length];
+        int total;
+    } Pair;
+
+    Pair pairs[category_count];
+
+    // Copy category names
+    for(int i = 0; i < category_count; i++) {
+        strncpy(pairs[i].category, categories[i].name, name_max_length);
+        pairs[i].total = 0;
+    }
+
+    // Find total for each category in a given timeline
+    for(int i = 0; i < interval_count; i++) {
+        Interval *interval = &intervals[i];
+        int interval_timeline = get_target(interval);
+        mvprintw(0, 0, "TARGET HERE IS: %d", target);
+        mvprintw(1, 0, "TIMELINE HERE IS: %d", interval_timeline);
+        if(interval_timeline == target)
+            pairs[interval->category_idx].total += interval->end - interval->start;
+    }
+
+    // Print "Category: total_mins/total_secs
+    for(int i = 0; i < category_count; i++) {
+        if(pairs[i].total <= 0)
+            continue;
+        int mins_focused = pairs[i].total / seconds_in_minute;
+        int secs_focused = pairs[i].total % seconds_in_minute;
+
+        attron(COLOR_PAIR(3));
+        mvprintw(y + i, x, "%s: %02dm%02ds", pairs[i].category, mins_focused, secs_focused);
+        attroff(COLOR_PAIR(3));
+    }
 }
 
 static int get_yday(struct tm *dynamic_t) { return dynamic_t->tm_yday; }
-
 
 static int get_week_monday(struct tm *dynamic_t)
 {
@@ -671,7 +726,7 @@ static void display_year_line(struct tm *dynamic_t, int y, int col)
     char buff[50];
     int len = snprintf(buff, sizeof(buff), "<- %d ->", dynamic_t->tm_year + 1900);
     attron(COLOR_PAIR(3));
-    mvaddstr(y + 2, (col - len) / 2, buff);
+    mvaddstr(y, (col - len) / 2, buff);
     attroff(COLOR_PAIR(3));
 }
 
@@ -680,7 +735,7 @@ static void display_month_line(struct tm *dynamic_t, int y, int col)
     char buff[50];
     int len = snprintf(buff, sizeof(buff), "<- %02d/%d ->", dynamic_t->tm_mon + 1, dynamic_t->tm_year + 1900);
     attron(COLOR_PAIR(3));
-    mvaddstr(y + 2, (col - len) / 2, buff);
+    mvaddstr(y, (col - len) / 2, buff);
     attroff(COLOR_PAIR(3));
 }
 
@@ -690,7 +745,7 @@ static void display_day_line(struct tm *dynamic_t, int y, int col)
     int len = snprintf(buff, sizeof(buff), "<- %02d/%02d/%d ->", dynamic_t->tm_mday,
             dynamic_t->tm_mon + 1, dynamic_t->tm_year + 1900);
     attron(COLOR_PAIR(3));
-    mvaddstr(y + 2, (col - len) / 2, buff);
+    mvaddstr(y, (col - len) / 2, buff);
     attroff(COLOR_PAIR(3));
 }
 
@@ -712,7 +767,7 @@ static void display_week_line(struct tm *dynamic_t, int y, int col)
             monday.tm_mday, monday.tm_mon + 1, sunday.tm_mday,
             sunday.tm_mon + 1);
     attron(COLOR_PAIR(3));
-    mvaddstr(y + 2, (col - len) / 2, buff);
+    mvaddstr(y, (col - len) / 2, buff);
     attroff(COLOR_PAIR(3));
 }
 
@@ -720,11 +775,12 @@ static void stats(
         Interval *intervals,
         Category *categories,
         int interval_count,
+        int category_count,
         const char *title,
         display_date_line display_line,
         get_total_target get_target,
+        get_interval_target get_int_target,
         update_time update_tm,
-        display_catgs_distribution display_distribution,
         get_total_func get_total)
 {
     erase();
@@ -750,10 +806,7 @@ static void stats(
         mvaddstr(y, (col - buff_len) / 2, stats_buff);
         attroff(A_BOLD);
 
-        display_line(&dynamic_t, y, col);
-
-        display_categories_distribution()
-
+        display_line(&dynamic_t, y + 2, col);
 
         char total_buff[50];
         int total_buff_len = snprintf(total_buff,
@@ -761,7 +814,20 @@ static void stats(
                 "Total: %02dm%02ds",
                 total / minutes_in_hour,
                 total % minutes_in_hour);
+        attron(COLOR_PAIR(9));
         mvaddstr(y + 4, (col - total_buff_len) / 2, total_buff);
+        attroff(COLOR_PAIR(9));
+
+        get_distribution(
+                intervals,
+                categories,
+                interval_count,
+                category_count,
+                get_target(&dynamic_t),
+                dynamic_t, 
+                y + 6, (col - total_buff_len) / 2,
+                get_int_target);
+        
         refresh();
 
         int key = getch();
@@ -780,10 +846,11 @@ static void stats(
                 return;
         }
     }
-
 }
 
-static void statistics_screen(Interval *intervals, Category *categories, int interval_count)
+static void statistics_screen(
+        Interval *intervals, Category *categories,
+        int interval_count, int category_count)
 {
     erase();
     refresh();
@@ -820,26 +887,30 @@ static void statistics_screen(Interval *intervals, Category *categories, int int
         switch(key) {
             case 'd':
                 stats(intervals, categories,
-                        interval_count, DAY_TITLE,
-                        display_day_line, get_yday,
+                        interval_count, category_count,
+                        DAY_TITLE, display_day_line,
+                        get_yday, get_interval_day,
                         update_day, get_day_total_time);
                 break;
             case 'm':
                 stats(intervals, categories,
-                        interval_count, month_title,
-                        display_month_line, get_month,
+                        interval_count, category_count,
+                        month_title, display_month_line,
+                        get_month, get_interval_month,
                         update_month, get_month_total_time);
                 break;
             case 'y':
                 stats(intervals, categories,
-                        interval_count, year_title,
-                        display_year_line, get_year,
+                        interval_count, category_count,
+                        year_title, display_year_line,
+                        get_year, get_interval_year,
                         update_year, get_year_total_time);
                 break;
             case 'w':
                 stats(intervals, categories,
-                        interval_count, week_title,
-                        display_week_line, get_week_monday,
+                        interval_count, category_count,
+                        week_title, display_week_line,
+                        get_week_monday, get_interval_day,
                         update_week, get_week_total_time);
                 break;
             case key_escape:
@@ -964,7 +1035,7 @@ static void main_screen(Interval *intervals,
                     interval_count, *category_count);
             break;
         case CMD_STATS:
-            statistics_screen(intervals, categories, *interval_count);
+            statistics_screen(intervals, categories, *interval_count, *category_count);
             break;
         case key_escape:
             push(categories, sizeof(Category),
