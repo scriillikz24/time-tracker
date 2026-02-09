@@ -10,6 +10,7 @@
 #endif
 #define CATEGORIES_FILE ".categories.dat"
 #define INTERVALS_FILE ".intervals.dat"
+#define FOREST_FILE ".forest.csv"
 #define ESC_HINT "<- Esc"
 #define DAY_TITLE "DAY"
 
@@ -28,7 +29,9 @@ enum {
     days_in_year = 366,
     days_in_week = 7,
     months_in_year = 12,
-    min_time = 5 // in seconds
+    min_time = 5, // in seconds
+    forest_values = 13,
+    visible_rows = 10 // How many history items fit screen
 };
 
 enum {
@@ -360,6 +363,7 @@ static void categories_dashboard(Category *categories, int *category_count, int 
 }
 
 static void print_history_item(Interval *interval,
+        int idx,
         Category *categories,
         int category_count,
         int y, int x,
@@ -388,8 +392,10 @@ static void print_history_item(Interval *interval,
         strncpy(category_name, "[DELETED]", name_max_length);
     else
         strncpy(category_name, categories[interval->category_idx].name, name_max_length);
-    mvprintw(y, x, "%c %s: [%02d/%02d/%d]%02d:%02d-%02d:%02d(%02dm%02ds)",
+    mvhline(y, x, ' ', 75);
+    mvprintw(y, x, "%c [%d]%s: [%02d/%02d/%d]%02d:%02d-%02d:%02d(%02dm%02ds)",
             highlighted ? '>' : '-',
+            idx + 1,
             category_name,
             start_day, start_month, start_year,
             start_h, start_m,
@@ -419,11 +425,13 @@ static void history_dashboard(Interval *intervals,
 
     int bar_count = sizeof(bar_items) / sizeof(bar_items[0]);
 
-    int highlight = 0;
+
+    int scroll_offset = 0; // Which item is at top of screen
+    int highlight = scroll_offset;
 
     while(1) {
         attron(A_BOLD);
-        mvprintw(start_y - 3, start_x, "HISTORY");
+        mvprintw(start_y - 3, start_x, "HISTORY (%d)", *interval_count);
         attroff(A_BOLD);
 
         action_bar(bar_items, bar_count);
@@ -437,13 +445,17 @@ static void history_dashboard(Interval *intervals,
             return;
         }
 
-        for(int i = 0; i < *interval_count; i++)
-            print_history_item(&intervals[i],
+        for(int i = 0; i < visible_rows; i++) {
+            int actual_idx = scroll_offset + i;
+            if(actual_idx >= *interval_count)
+                break;
+            print_history_item(&intervals[actual_idx],
+                    actual_idx,
                     categories,
                     category_count,
                     start_y + i, start_x,
-                    i == highlight);
-
+                    actual_idx == highlight);
+        }
         int key;
         key = getch();
         switch(key) {
@@ -456,14 +468,19 @@ static void history_dashboard(Interval *intervals,
             break;
         case 'k':
         case KEY_UP:
-            if(*interval_count > 0)
-                highlight = (highlight - 1 + *interval_count) %
-                    *interval_count;
+            if(*interval_count > 0 && scroll_offset > 0 && highlight >= scroll_offset)
+                highlight--;
+            if(highlight < scroll_offset && scroll_offset > 0)
+                scroll_offset--;
             break;
         case 'j':
         case KEY_DOWN:
-            if(*interval_count > 0)
-                highlight = (highlight + 1) % *interval_count;
+            if(*interval_count > 0
+                    && highlight < *interval_count - 1
+                    && highlight <= visible_rows + scroll_offset - 1)
+                highlight++;
+            if(highlight > visible_rows + scroll_offset - 1)
+                scroll_offset++;
             break;
         case key_escape:
             clear();
@@ -605,6 +622,98 @@ static int get_week_total_time(Interval *intervals, Category *categories, int in
     return total;
 }
 
+void static append_category(
+        Category *categories,
+        int *category_count,
+        char category_name[name_max_length])
+{
+    strncpy(categories[*category_count].name,
+            category_name, name_max_length - 1);
+    categories[*category_count].name[name_max_length - 1] = '\0';
+    (*category_count)++;
+}
+
+static bool category_exists(
+        Category *categories,
+        int total,
+        char target[name_max_length],
+        int *idx
+        )
+{
+    for(int i = 0; i < total; i++) {
+        if(categories[i].name == target) {
+            *idx = i;
+            return true;
+        }
+    }
+    idx = NULL;
+    return false;
+}
+
+static void parse_forest_data(
+        Interval *intervals,
+        Category *categories,
+        int *interval_count,
+        int *category_count)
+{
+    char path[PATH_MAX];
+    get_data_path(path, FOREST_FILE);
+
+    FILE *source = fopen(path, "r");
+    if(!source) {
+        return;
+    }
+    char line[512]; // Plenty of space for string
+
+    fgets(line, sizeof(line), source); // Skip header line
+    while(fgets(line, sizeof(line), source) && *interval_count < max_intervals) {
+        struct tm start = {0}, end = {0};
+        int start_year, start_mon, end_year, end_mon;
+        char category_name[name_max_length];
+
+        Interval *interval = &intervals[*interval_count];
+
+        int parsed = sscanf(
+                line,
+                "%d-%d-%dT%d:%d:%d%*[^,],%d-%d-%dT%d:%d:%d%*[^,],%[^,]",
+                &start_year, &start_mon, &start.tm_mday,
+                &start.tm_hour, &start.tm_min,
+                &start.tm_sec, &end_year, &end_mon,
+                &end.tm_mday, &end.tm_hour,
+                &end.tm_min, &end.tm_sec,
+                category_name);
+        if(parsed == forest_values) {
+            start.tm_year = start_year + 1900;
+            start.tm_mon = start_mon + 1;
+            start.tm_isdst = -1;
+
+            end.tm_year = end_year + 1900;
+            end.tm_mon = end_mon + 1;
+            end.tm_isdst = -1;
+
+            int ctgr_idx;
+            if(!category_exists(categories, *category_count, category_name, &ctgr_idx))
+                append_category(categories, category_count, category_name);
+            mvprintw(1, 0, "CTGR_IDX: %d/CTGR_NAME: %s", ctgr_idx, categories[ctgr_idx].name);
+            timeout(default_timeout);
+            getch();
+
+            interval->start = mktime(&start);
+            mvprintw(0, 0, "START: %ld", interval->start);
+            interval->end = mktime(&end);
+            interval->category_idx = *category_count - 1;
+            (*interval_count)++;
+        }
+        else {
+            mvprintw(0, 0, "Error: failed to parse timestamp (got %d/%d fields)\n",
+                    parsed, forest_values);
+            break;
+        }
+    }
+
+    fclose(source);
+}
+
 typedef int (*get_total_func)(Interval*, Category*, int, int);
 typedef void(*update_time)(struct tm*, struct tm*, int);
 typedef int(*get_total_target)(struct tm*);
@@ -652,8 +761,6 @@ static void get_distribution(Interval *intervals,
     for(int i = 0; i < interval_count; i++) {
         Interval *interval = &intervals[i];
         int interval_timeline = get_target(interval);
-        mvprintw(0, 0, "TARGET HERE IS: %d", target);
-        mvprintw(1, 0, "TIMELINE HERE IS: %d", interval_timeline);
         if(interval_timeline == target)
             pairs[interval->category_idx].total += interval->end - interval->start;
     }
@@ -1093,6 +1200,7 @@ int main() {
 
     pull(categories, sizeof(Category), &category_count, CATEGORIES_FILE);
     pull(intervals, sizeof(Interval), &interval_count, INTERVALS_FILE);
+    //parse_forest_data(intervals, categories, &interval_count, &category_count);
 
     main_screen(intervals, &interval_count, categories, &category_count);
 
