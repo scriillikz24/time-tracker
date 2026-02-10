@@ -20,6 +20,7 @@ enum {
     max_intervals = 5000,
     key_escape = 27,
     key_enter = 10,
+    key_space = 32,
     default_timeout = 1000,
     colors_max = 256,
     bar_gap = 4,
@@ -32,7 +33,8 @@ enum {
     months_in_year = 12,
     min_time = 5, // in seconds
     forest_values = 13,
-    visible_rows = 10 // How many history items fit screen
+    visible_rows = 20, // How many history items fit screen
+    forest_intervals = 400
 };
 
 enum {
@@ -446,7 +448,8 @@ static void history_dashboard(Interval *intervals,
             return;
         }
 
-        for(int i = 0; i < visible_rows; i++) {
+        int i;
+        for(i = 0; i < visible_rows; i++) {
             int actual_idx = scroll_offset + i;
             if(actual_idx >= *interval_count)
                 break;
@@ -457,7 +460,10 @@ static void history_dashboard(Interval *intervals,
                     start_y + i, start_x,
                     actual_idx == highlight);
         }
+
         int key;
+       // mvprintw(0, 0, "SCROLLOFFSET: %d    ", scroll_offset);
+       // mvprintw(1, 0, "HIGHLIGHT: %d    ", highlight);
         key = getch();
         switch(key) {
         case CMD_DELETE:
@@ -469,11 +475,18 @@ static void history_dashboard(Interval *intervals,
             break;
         case 'k':
         case KEY_UP:
-            if(*interval_count > 0 && scroll_offset > 0 && highlight >= scroll_offset)
+            if(*interval_count > 0 && highlight >= scroll_offset && highlight > 0)
                 highlight--;
             if(highlight < scroll_offset && scroll_offset > 0)
                 scroll_offset--;
             break;
+        case KEY_BACKSPACE:
+            if(*interval_count > 0 && highlight > visible_rows - 1)
+                highlight -= visible_rows;
+            if(highlight < scroll_offset && scroll_offset > 0)
+                scroll_offset = highlight;
+            break;
+             
         case 'j':
         case KEY_DOWN:
             if(*interval_count > 0
@@ -482,6 +495,14 @@ static void history_dashboard(Interval *intervals,
                 highlight++;
             if(highlight > visible_rows + scroll_offset - 1)
                 scroll_offset++;
+            break;
+        case key_space:
+            if(*interval_count > 0
+                    && highlight < *interval_count - visible_rows
+                    && highlight <= visible_rows + scroll_offset - 1)
+                highlight += visible_rows;
+            if(highlight > visible_rows + scroll_offset - 1)
+                scroll_offset += visible_rows;
             break;
         case key_escape:
             clear();
@@ -575,48 +596,75 @@ static void pull(void *attr, size_t size, int *count, char *file_name)
     fclose(source);
 }
 
-static int get_day_total_time(Interval *intervals, Category *categories, int interval_count, int day)
+static int get_day_total_time(
+        Interval *intervals, Category *categories,
+        int interval_count, struct tm t)
 {
     int total = 0;
     for(int i = 0; i < interval_count; i++) {
         int interval_day = localtime(&intervals[i].start)->tm_yday;
-        if(interval_day == day) {
+        int interval_year = localtime(&intervals[i].start)->tm_year;
+       // timeout(-1);
+       // mvprintw(0, 0, "INTERVAL DAY: %d | TODAY: %d      " , interval_day, t.tm_yday);
+       // mvprintw(1, 0, "INTERVAL YEAR: %d | TODAY: %d     " , interval_year, t.tm_year);
+       // getch();
+        if(interval_day == t.tm_yday && interval_year == t.tm_year) {
             total += intervals[i].end - intervals[i].start;
         }
     }
     return total;
 }
 
-static int get_month_total_time(Interval *intervals, Category *categories, int interval_count, int month)
+static int get_month_total_time(
+        Interval *intervals, Category *categories,
+        int interval_count, struct tm t)
 {
     int total = 0;
     for(int i = 0; i < interval_count; i++) {
         int interval_month = localtime(&intervals[i].start)->tm_mon;
-        if(interval_month == month) {
+        int interval_year = localtime(&intervals[i].start)->tm_year;
+        if(interval_month == t.tm_mon && interval_year == t.tm_year) {
             total += intervals[i].end - intervals[i].start;
         }
     }
     return total;
 }
 
-static int get_year_total_time(Interval *intervals, Category *categories, int interval_count, int year)
+static int get_year_total_time(
+        Interval *intervals, Category *categories,
+        int interval_count, struct tm t)
 {
     int total = 0;
     for(int i = 0; i < interval_count; i++) {
         int interval_year = localtime(&intervals[i].start)->tm_year;
-        if(interval_year == year) {
+        if(interval_year == t.tm_year) {
             total += intervals[i].end - intervals[i].start;
         }
     }
     return total;
 }
 
-static int get_week_total_time(Interval *intervals, Category *categories, int interval_count, int monday)
+static int get_week_monday(struct tm *dynamic_t)
+{
+    int days_since_monday = (dynamic_t->tm_wday + days_in_week - 1) % days_in_week;
+    struct tm monday = *dynamic_t;
+    monday.tm_mday -= days_since_monday;
+    mktime(&monday); 
+    return monday.tm_yday;
+}
+
+static int get_week_total_time(
+        Interval *intervals, Category *categories,
+        int interval_count, struct tm t)
 {
     int total = 0;
+    int monday = get_week_monday(&t);
     for(int i = 0; i < interval_count; i++) {
         int interval_start_day = localtime(&intervals[i].start)->tm_yday;
-        if(interval_start_day >= monday && interval_start_day <= monday + days_in_week - 1) {
+        int interval_year = localtime(&intervals[i].start)->tm_year;
+        if(interval_start_day >= monday
+                && interval_year == t.tm_year
+                && interval_start_day <= monday + days_in_week - 1) {
             total += intervals[i].end - intervals[i].start;
         }
     }
@@ -711,7 +759,7 @@ static void parse_forest_data(
     fclose(source);
 }
 
-typedef int (*get_total_func)(Interval*, Category*, int, int);
+typedef int (*get_total_func)(Interval*, Category*, int, struct tm);
 typedef void(*update_time)(struct tm*, struct tm*, int);
 typedef int(*get_total_target)(struct tm*);
 typedef void(*display_date_line)(struct tm*, int, int);
@@ -787,14 +835,6 @@ static void get_distribution(Interval *intervals,
 
 static int get_yday(struct tm *dynamic_t) { return dynamic_t->tm_yday; }
 
-static int get_week_monday(struct tm *dynamic_t)
-{
-    int days_since_monday = (dynamic_t->tm_wday + days_in_week - 1) % days_in_week;
-    struct tm monday = *dynamic_t;
-    monday.tm_mday -= days_since_monday;
-    mktime(&monday); 
-    return monday.tm_yday;
-}
 
 static int get_month(struct tm *dynamic_t) { return dynamic_t->tm_mon; }
 
@@ -910,7 +950,7 @@ static void stats(
     while(1) {
         mktime(&dynamic_t);
         int total = get_total(intervals, categories,
-                interval_count, get_target(&dynamic_t));
+                interval_count, dynamic_t);
 
         char stats_buff[100]; // Plenty of space for string
         int buff_len = snprintf(stats_buff, sizeof(stats_buff),
@@ -1120,10 +1160,11 @@ static void main_screen(Interval *intervals,
                 main_screen_buffer);
         attroff(A_BOLD);
 
+        struct tm t = *localtime(&now);
         int day_total = get_day_total_time(intervals,
                 categories,
                 *interval_count,
-                localtime(&now)->tm_yday);
+                t);
         int mins_total = day_total / seconds_in_minute; 
         int secs_total = day_total % seconds_in_minute;
 
@@ -1216,7 +1257,8 @@ int main() {
 
     pull(categories, sizeof(Category), &category_count, CATEGORIES_FILE);
     pull(intervals, sizeof(Interval), &interval_count, INTERVALS_FILE);
-    //parse_forest_data(intervals, categories, &interval_count, &category_count);
+    if(interval_count < forest_intervals)
+        parse_forest_data(intervals, categories, &interval_count, &category_count);
 
     main_screen(intervals, &interval_count, categories, &category_count);
 
