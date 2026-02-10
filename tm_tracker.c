@@ -17,7 +17,7 @@
 enum {
     name_max_length = 30,
     max_categories = 5,
-    max_intervals = 1000,
+    max_intervals = 5000,
     key_escape = 27,
     key_enter = 10,
     default_timeout = 1000,
@@ -26,6 +26,7 @@ enum {
     bar_height = 3,
     minutes_in_hour = 60,
     seconds_in_minute = 60,
+    seconds_in_hour = 3600,
     days_in_year = 366,
     days_in_week = 7,
     months_in_year = 12,
@@ -415,7 +416,7 @@ static void history_dashboard(Interval *intervals,
 
     int r, c;
     getmaxyx(stdscr, r, c);
-    int start_y = (r - *interval_count) / 2;
+    int start_y = (r - visible_rows) / 2;
     int start_x = (c - name_max_length) / 2;
 
     static const char *bar_items[] = {
@@ -641,12 +642,12 @@ static bool category_exists(
         )
 {
     for(int i = 0; i < total; i++) {
-        if(categories[i].name == target) {
+        if(strcmp(categories[i].name, target) == 0) {
             *idx = i;
             return true;
         }
     }
-    idx = NULL;
+    *idx = total;
     return false;
 }
 
@@ -683,25 +684,21 @@ static void parse_forest_data(
                 &end.tm_min, &end.tm_sec,
                 category_name);
         if(parsed == forest_values) {
-            start.tm_year = start_year + 1900;
-            start.tm_mon = start_mon + 1;
+            start.tm_year = start_year - 1900;
+            start.tm_mon = start_mon - 1;
             start.tm_isdst = -1;
 
-            end.tm_year = end_year + 1900;
-            end.tm_mon = end_mon + 1;
+            end.tm_year = end_year - 1900;
+            end.tm_mon = end_mon - 1;
             end.tm_isdst = -1;
 
             int ctgr_idx;
             if(!category_exists(categories, *category_count, category_name, &ctgr_idx))
                 append_category(categories, category_count, category_name);
-            mvprintw(1, 0, "CTGR_IDX: %d/CTGR_NAME: %s", ctgr_idx, categories[ctgr_idx].name);
-            timeout(default_timeout);
-            getch();
 
             interval->start = mktime(&start);
-            mvprintw(0, 0, "START: %ld", interval->start);
             interval->end = mktime(&end);
-            interval->category_idx = *category_count - 1;
+            interval->category_idx = ctgr_idx;
             (*interval_count)++;
         }
         else {
@@ -751,6 +748,9 @@ static void get_distribution(Interval *intervals,
 
     Pair pairs[category_count];
 
+    int rows, cols;
+    getmaxyx(stdscr, rows, cols);
+
     // Copy category names
     for(int i = 0; i < category_count; i++) {
         strncpy(pairs[i].category, categories[i].name, name_max_length);
@@ -767,13 +767,20 @@ static void get_distribution(Interval *intervals,
 
     // Print "Category: total_mins/total_secs
     for(int i = 0; i < category_count; i++) {
+        mvhline(y + i, x - 1, ' ', cols - x);
         if(pairs[i].total <= 0)
             continue;
         int mins_focused = pairs[i].total / seconds_in_minute;
         int secs_focused = pairs[i].total % seconds_in_minute;
 
         attron(COLOR_PAIR(3));
-        mvprintw(y + i, x, "%s: %02dm%02ds", pairs[i].category, mins_focused, secs_focused);
+        if(mins_focused < minutes_in_hour)
+            mvprintw(y + i, x, "%s: %dm%ds",
+                    pairs[i].category, mins_focused, secs_focused);
+        else
+            mvprintw(y + i, x, "%s: %dh%dm",
+                    pairs[i].category, mins_focused / minutes_in_hour,
+                    mins_focused & minutes_in_hour);
         attroff(COLOR_PAIR(3));
     }
 }
@@ -916,12 +923,21 @@ static void stats(
         display_line(&dynamic_t, y + 2, col);
 
         char total_buff[50];
-        int total_buff_len = snprintf(total_buff,
-                sizeof(total_buff),
-                "Total: %02dm%02ds",
-                total / minutes_in_hour,
-                total % minutes_in_hour);
+        int total_buff_len;
+        if(total / seconds_in_minute < minutes_in_hour)
+            total_buff_len = snprintf(total_buff,
+                    sizeof(total_buff),
+                    "Total: %dm%ds",
+                    total / seconds_in_minute,
+                    total % seconds_in_minute);
+        else
+            total_buff_len = snprintf(total_buff,
+                    sizeof(total_buff),
+                    "Total: %dh%dm",
+                    total / seconds_in_hour,
+                    total % seconds_in_hour / seconds_in_minute);
         attron(COLOR_PAIR(9));
+        mvhline(y + 4, 0, ' ', col);
         mvaddstr(y + 4, (col - total_buff_len) / 2, total_buff);
         attroff(COLOR_PAIR(9));
 
