@@ -15,6 +15,7 @@
 #define DAY_TITLE "DAY"
 
 enum {
+    line_length = 50,
     name_max_length = 30,
     max_categories = 5,
     max_intervals = 5000,
@@ -396,7 +397,7 @@ static void print_history_item(Interval *interval,
     else
         strncpy(category_name, categories[interval->category_idx].name, name_max_length);
     mvhline(y, x, ' ', 75);
-    mvprintw(y, x, "%c [%d]%s: [%02d/%02d/%d]%02d:%02d-%02d:%02d(%02dm%02ds)",
+    mvprintw(y, x, "%c [%d] %s: [%02d/%02d/%d]%02d:%02d-%02d:%02d(%02dm%02ds)",
             highlighted ? '>' : '-',
             idx + 1,
             category_name,
@@ -407,12 +408,137 @@ static void print_history_item(Interval *interval,
     if(!highlighted) attroff(COLOR_PAIR(3));
 }
 
+//static void swap(Interval *a, Interval *b)
+//{
+//    Interval *c = a;
+//    a = b; 
+//    b = c;
+//}
+//
+//static int partition(Interval *arr, int len)
+//{
+//    Interval pivot = arr[len - 1];
+//    int pivot_duration = pivot.end - pivot.start;
+//
+//    int i = -1;
+//
+//    for(int j = 0; j < len; j++) {
+//        int duration = arr[j].end - arr[j].start;
+//        if(duration < pivot_duration) {
+//            i++;
+//            swap(&arr[j], &arr[i]);
+//        }
+//    }
+//    swap(&arr[i+1], &pivot);
+//    return i + 1;
+//}
+//
+//static void qsort_duration(Interval *intervals, Interval *sorted_intervals, int len)
+//{
+//    if(len <= 1)
+//        return;
+//
+//    Interval pivot = sorted_intervals[len/2];
+//    int i = -1;
+//    int j = 0;
+//    while(j < len) {
+//        int duration = sorted_intervals[j].end - sorted_intervals[j].start;
+//        if(duration < pivot.end - pivot.start) {
+//            i++;
+//            Interval buff = sorted_intervals[i];
+//            sorted_intervals[i] = sorted_intervals[j];
+//            sorted_intervals[j] = buff;
+//        }
+//        j++;
+//    }
+//    Interval buff = sorted_intervals[i+1];
+//    sorted_intervals[i+1] = pivot;
+//    pivot = buff;
+//}
+
+static void print_date_history_list(
+        Interval *intervals,
+        Category *categories,
+        int category_count,
+        int interval_count,
+        int scroll_offset,
+        int start_y, int start_x,
+        bool reversed,
+        int highlight
+        )
+{
+    mvhline(start_y, start_x, ACS_HLINE, line_length);
+    if(!reversed)
+        for(int i = 0; i < visible_rows; i++) {
+            int actual_idx = scroll_offset + i;
+            if(actual_idx >= interval_count)
+                break;
+            print_history_item(&intervals[actual_idx],
+                    actual_idx,
+                    categories,
+                    category_count,
+                    start_y + i + 1, start_x,
+                    actual_idx == highlight);
+        }
+    else
+        for(int i = 0; i < visible_rows; i++) {
+            int actual_idx = scroll_offset - i;
+            if(actual_idx < 0)
+                break;
+            print_history_item(&intervals[actual_idx],
+                    actual_idx,
+                    categories,
+                    category_count,
+                    start_y + i + 1, start_x,
+                    actual_idx == highlight);
+        }
+    mvhline(start_y + visible_rows + 1, start_x, ACS_HLINE, line_length);
+}
+
+//static void print_duration_history_list(
+//        Interval *intervals,
+//        Category *categories,
+//        int category_count,
+//        int interval_count,
+//        int scroll_offset,
+//        int start_y, int start_x,
+//        bool reversed,
+//        int highlight
+//        )
+//{
+//    mvhline(start_y, start_x, ACS_HLINE, line_length);
+//    if(!reversed)
+//        for(int i = 0; i < visible_rows; i++) {
+//            int actual_idx = scroll_offset + i;
+//            if(actual_idx >= interval_count)
+//                break;
+//            print_history_item(&intervals[actual_idx],
+//                    actual_idx,
+//                    categories,
+//                    category_count,
+//                    start_y + i + 1, start_x,
+//                    actual_idx == highlight);
+//        }
+//    else
+//        for(int i = 0; i < visible_rows; i++) {
+//            int actual_idx = scroll_offset - i;
+//            if(actual_idx < 0)
+//                break;
+//            print_history_item(&intervals[actual_idx],
+//                    actual_idx,
+//                    categories,
+//                    category_count,
+//                    start_y + i + 1, start_x,
+//                    actual_idx == highlight);
+//        }
+//    mvhline(start_y + visible_rows + 1, start_x, ACS_HLINE, line_length);
+//}
+//
 static void history_dashboard(Interval *intervals,
         Category *categories, 
         int *interval_count,
         int category_count)
 {
-    timeout(-1);
     erase();
     refresh();
 
@@ -422,15 +548,27 @@ static void history_dashboard(Interval *intervals,
     int start_x = (c - name_max_length) / 2;
 
     static const char *bar_items[] = {
+        "[s] Change Sort",
+        "[r] Reverse",
         "[d] Delete",
         "[Esc] Back"
     };
 
     int bar_count = sizeof(bar_items) / sizeof(bar_items[0]);
 
-
     int scroll_offset = 0; // Which item is at top of screen
     int highlight = scroll_offset;
+
+    const char *sort_print_options[] = {
+        "Date", "Duration"
+    };
+    typedef enum sort_logic_options {
+        date, duration
+    } st_logic;
+
+    st_logic curr_sort = date;
+    int sort_max = sizeof(sort_print_options) / sizeof(sort_print_options[0]);
+    bool reversed = false;
 
     while(1) {
         attron(A_BOLD);
@@ -444,26 +582,33 @@ static void history_dashboard(Interval *intervals,
             getch();
             clear();
             refresh();
-            timeout(default_timeout);
             return;
         }
 
-        int i;
-        for(i = 0; i < visible_rows; i++) {
-            int actual_idx = scroll_offset + i;
-            if(actual_idx >= *interval_count)
-                break;
-            print_history_item(&intervals[actual_idx],
-                    actual_idx,
+        mvhline(start_y - 1, start_x, ' ', line_length);
+        mvprintw(start_y - 1, start_x, "Sort by: %s (%s)",
+                sort_print_options[curr_sort],
+                reversed ? "desc" : "asc");
+        switch(curr_sort) {
+        case date:
+            print_date_history_list(
+                    intervals,
                     categories,
                     category_count,
-                    start_y + i, start_x,
-                    actual_idx == highlight);
+                    *interval_count,
+                    scroll_offset,
+                    start_y, start_x,
+                    reversed,
+                    highlight);
+            break;
+        case duration:
+            //print_duration_history_list
+            break;
         }
 
         int key;
-       // mvprintw(0, 0, "SCROLLOFFSET: %d    ", scroll_offset);
-       // mvprintw(1, 0, "HIGHLIGHT: %d    ", highlight);
+      // mvprintw(0, 0, "SCROLLOFFSET: %d    ", scroll_offset);
+      // mvprintw(1, 0, "HIGHLIGHT: %d    ", highlight);
         key = getch();
         switch(key) {
         case CMD_DELETE:
@@ -475,39 +620,78 @@ static void history_dashboard(Interval *intervals,
             break;
         case 'k':
         case KEY_UP:
-            if(*interval_count > 0 && highlight >= scroll_offset && highlight > 0)
-                highlight--;
-            if(highlight < scroll_offset && scroll_offset > 0)
-                scroll_offset--;
+            if(!reversed) {
+                if(*interval_count > 0 && highlight >= scroll_offset && highlight > 0)
+                    highlight--;
+                if(highlight < scroll_offset && scroll_offset > 0)
+                    scroll_offset--;
+            }
+            else {
+                if(*interval_count > 0 && highlight < *interval_count - 1
+                        && highlight <= scroll_offset)
+                    highlight++;
+                if(highlight > scroll_offset && scroll_offset < *interval_count - 1)
+                    scroll_offset++;
+            }
             break;
         case KEY_BACKSPACE:
-            if(*interval_count > 0 && highlight > visible_rows - 1)
-                highlight -= visible_rows;
-            if(highlight < scroll_offset && scroll_offset > 0)
-                scroll_offset = highlight;
+            if(!reversed) {
+                if(*interval_count > 0 && highlight > visible_rows - 1)
+                    highlight -= visible_rows;
+                if(highlight < scroll_offset && scroll_offset > 0)
+                    scroll_offset = highlight;
+            }
+            else {
+                if(*interval_count > 0 && highlight < *interval_count - visible_rows * 2)
+                    highlight += visible_rows;
+                if(highlight > scroll_offset)
+                    scroll_offset += visible_rows;
+            }
             break;
-             
         case 'j':
         case KEY_DOWN:
-            if(*interval_count > 0
-                    && highlight < *interval_count - 1
-                    && highlight <= visible_rows + scroll_offset - 1)
-                highlight++;
-            if(highlight > visible_rows + scroll_offset - 1)
-                scroll_offset++;
+            if(!reversed) {
+                if(*interval_count > 0 && highlight < *interval_count - 1
+                        && highlight <= visible_rows + scroll_offset - 1)
+                    highlight++;
+                if(highlight > visible_rows + scroll_offset - 1
+                        && scroll_offset < *interval_count - visible_rows)
+                    scroll_offset++;
+            }
+            else {
+                if(*interval_count > 0 && highlight > 0 && highlight > scroll_offset - visible_rows)
+                    highlight--;
+                if(highlight <= scroll_offset - visible_rows && scroll_offset - visible_rows >= 0)
+                    scroll_offset--;
+            }
             break;
         case key_space:
-            if(*interval_count > 0
-                    && highlight < *interval_count - visible_rows
-                    && highlight <= visible_rows + scroll_offset - 1)
-                highlight += visible_rows;
-            if(highlight > visible_rows + scroll_offset - 1)
-                scroll_offset += visible_rows;
+            if(!reversed) {
+                if(*interval_count > 0 && highlight < *interval_count - visible_rows * 2)
+                    highlight += visible_rows;
+                if(highlight > visible_rows + scroll_offset - 1)
+                    scroll_offset += visible_rows;
+            }
+            else {
+                if(*interval_count > 0 && highlight >= visible_rows * 2)
+                    highlight -= visible_rows;
+                if(highlight <= scroll_offset - visible_rows && scroll_offset - visible_rows * 2 >= 0)
+                    scroll_offset -= visible_rows;
+            }
+            break;
+        case 's':
+            curr_sort = (curr_sort + 1) % sort_max;
+            break;
+        case 'r':
+            if(!reversed)
+                highlight = scroll_offset = *interval_count - 1;
+            else
+                highlight = scroll_offset = 0;
+            reversed = !reversed;
             break;
         case key_escape:
             clear();
             refresh();
-            timeout(default_timeout);
             return;
         }
     }
@@ -538,9 +722,7 @@ static bool start_interval(Interval *intervals, int *interval_count, Category *c
 
     if(*category_count == 0) {
         mvprintw(start_y, start_x, "Create a category first.");
-        timeout(-1);
         getch(); 
-        timeout(default_timeout);
         clear();
         refresh();
         return false; // Not success
@@ -604,10 +786,6 @@ static int get_day_total_time(
     for(int i = 0; i < interval_count; i++) {
         int interval_day = localtime(&intervals[i].start)->tm_yday;
         int interval_year = localtime(&intervals[i].start)->tm_year;
-       // timeout(-1);
-       // mvprintw(0, 0, "INTERVAL DAY: %d | TODAY: %d      " , interval_day, t.tm_yday);
-       // mvprintw(1, 0, "INTERVAL YEAR: %d | TODAY: %d     " , interval_year, t.tm_year);
-       // getch();
         if(interval_day == t.tm_yday && interval_year == t.tm_year) {
             total += intervals[i].end - intervals[i].start;
         }
@@ -1133,7 +1311,7 @@ static void main_screen(Interval *intervals,
         Category *categories,
         int *category_count)
 {
-    timeout(default_timeout);
+    timeout(-1);
 
     static const char *bar_items[] = {
         "[s] Start",
