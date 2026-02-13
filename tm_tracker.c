@@ -19,6 +19,7 @@ enum {
     name_max_length = 30,
     max_categories = 5,
     max_intervals = 5000,
+    max_time = 120, // in minutes
     key_escape = 27,
     key_enter = 10,
     key_space = 32,
@@ -84,26 +85,32 @@ static void action_bar(const char **bar_items, int bar_count)
 
 static void print_time(WINDOW *win, Interval *interval, Category *categories, int height, int width)
 {
+
     time_t current = time(NULL);
     time_t passed = current - interval->start;
 
-    int minutes = passed / 60;
-    int seconds = passed % 60;
+    int minutes = passed / seconds_in_minute;
+    int seconds = passed % seconds_in_minute;
 
     char *category = categories[interval->category_idx].name;
     wattron(win, A_BOLD);
     mvwprintw(win, 1, (width - strlen(category)) / 2, "%s", category);
     wattroff(win, A_BOLD);
-    mvwprintw(win, height - 4, (width - 4) / 2, "%02d:%02d", minutes, seconds);
+
+    mvwprintw(win, height - 4, (width - 5) / 2, "%02d:%02d", minutes, seconds);
+
     char msg[name_max_length] = {0};
     if(time(NULL) - interval->start < min_time)
         strncpy(msg, "[Esc] Give Up!", name_max_length - 1);
     else
         strncpy(msg, "[Esc] Stop", name_max_length - 1);
+
     mvwhline(win, height - 2, 1, ' ', width - 2);
+
     wattron(win, COLOR_PAIR(3));
     mvwprintw(win, height - 2, (width - strlen(msg)) / 2, "%s", msg);
     wattroff(win, COLOR_PAIR(3));
+
     wrefresh(win);
 }
 
@@ -967,8 +974,7 @@ static void get_distribution(Interval *intervals,
 
     Pair pairs[category_count];
 
-    int rows, cols;
-    getmaxyx(stdscr, rows, cols);
+    int cols = getmaxx(stdscr);
 
     // Copy category names
     for(int i = 0; i < category_count; i++) {
@@ -985,27 +991,30 @@ static void get_distribution(Interval *intervals,
     }
 
     // Print "Category: total_mins/total_secs
+    int print_y = y;
     for(int i = 0; i < category_count; i++) {
         mvhline(y + i, x - 1, ' ', cols - x);
         if(pairs[i].total <= 0)
             continue;
+
         int mins_focused = pairs[i].total / seconds_in_minute;
         int secs_focused = pairs[i].total % seconds_in_minute;
 
         attron(COLOR_PAIR(3));
         if(mins_focused < minutes_in_hour)
-            mvprintw(y + i, x, "%s: %dm%ds",
+            mvprintw(print_y, x, "%s: %dm%ds",
                     pairs[i].category, mins_focused, secs_focused);
         else
-            mvprintw(y + i, x, "%s: %dh%dm",
+            mvprintw(print_y, x, "%s: %dh%dm",
                     pairs[i].category, mins_focused / minutes_in_hour,
                     mins_focused & minutes_in_hour);
         attroff(COLOR_PAIR(3));
+
+        print_y++;
     }
 }
 
 static int get_yday(struct tm *dynamic_t) { return dynamic_t->tm_yday; }
-
 
 static int get_month(struct tm *dynamic_t) { return dynamic_t->tm_mon; }
 
@@ -1255,12 +1264,35 @@ static void statistics_screen(
     }
 }
 
+static void force_end(WINDOW *win, int height, int width)
+{
+    werase(win);
+    wrefresh(win);
+    timeout(-1);
+
+    box(win, 0, 0); 
+
+    char buffer[] = {
+        "Max focus time reached"
+    }; 
+    int len = strlen(buffer);
+
+    wattron(win, COLOR_PAIR(3));
+    mvwaddstr(win, height / 2 - 1, (width - len) / 2, buffer);
+    mvwprintw(win, height / 2 + 1, (width - 7) / 2, "%dmins", max_time);
+    wattroff(win, COLOR_PAIR(3));
+
+    wgetch(win);
+    timeout(default_timeout);
+}
+
 static void active_screen(Interval *interval,
         Category *categories,
         int *interval_count)
 {
     erase();
     refresh();
+
     int rows, cols;
     getmaxyx(stdscr, rows, cols);
 
@@ -1278,8 +1310,14 @@ static void active_screen(Interval *interval,
     box(win, 0, 0); 
     
     while(1) {
-        print_time(win, interval, categories, height, width);
         interval->end = time(NULL);
+        print_time(win, interval, categories, height, width);
+
+        if(interval->end - interval->start >= max_time * seconds_in_minute) {
+            force_end(win, height, width);
+            delwin(win);
+            return;
+        }
 
         int key = getch();
         if(key == key_escape || key == 'q') {
@@ -1293,8 +1331,6 @@ static void active_screen(Interval *interval,
                 delwin(win);
                 return;
             }
-            erase();
-            refresh();
         }
     }
 }
@@ -1353,10 +1389,12 @@ static void main_screen(Interval *intervals,
         case CMD_START:
             if(start_interval(intervals, interval_count, 
                         categories, category_count)) {
+                timeout(default_timeout);
                 active_screen
                     (&intervals[*interval_count - 1],
                      categories,
                      interval_count);
+                timeout(-1);
                 erase();
                 refresh();
             }
