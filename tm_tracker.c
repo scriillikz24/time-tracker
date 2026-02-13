@@ -300,7 +300,7 @@ static void categories_dashboard(Category *categories, int *category_count, int 
 
     int row, col;
     getmaxyx(stdscr, row, col);
-    int y = row / 2;
+    int y = (row - *category_count - bar_height) / 2;
 
     static const char *bar_items[] = {
         "[a] Add",
@@ -313,20 +313,21 @@ static void categories_dashboard(Category *categories, int *category_count, int 
     while(1) {
         char dashboard_buff[] = "CATEGORIES DASHBOARD";
         int dashb_buff_len = strlen(dashboard_buff);
+        int x = (col - dashb_buff_len) / 2;
 
         attron(A_BOLD);
-        mvaddstr(y - 2, (col - dashb_buff_len) / 2, dashboard_buff);
+        mvaddstr(y - 2, x, dashboard_buff);
         attroff(A_BOLD);
 
         action_bar(bar_items, bar_count);
 
         if(*category_count == 0) {
             char buff[] = "No categories";
-            mvaddstr(y, (col - strlen(buff)) / 2, buff);
+            mvaddstr(y, x, buff);
         }
 
         for(int i = 0; i < *category_count; i++) {
-            print_category_item(categories[i].name, y + i, (col - dashb_buff_len) / 2, i == highlight);
+            print_category_item(categories[i].name, y + i, x, i == highlight);
         }
 
         int key;
@@ -408,53 +409,28 @@ static void print_history_item(Interval *interval,
     if(!highlighted) attroff(COLOR_PAIR(3));
 }
 
-//static void swap(Interval *a, Interval *b)
-//{
-//    Interval *c = a;
-//    a = b; 
-//    b = c;
-//}
-//
-//static int partition(Interval *arr, int len)
-//{
-//    Interval pivot = arr[len - 1];
-//    int pivot_duration = pivot.end - pivot.start;
-//
-//    int i = -1;
-//
-//    for(int j = 0; j < len; j++) {
-//        int duration = arr[j].end - arr[j].start;
-//        if(duration < pivot_duration) {
-//            i++;
-//            swap(&arr[j], &arr[i]);
-//        }
-//    }
-//    swap(&arr[i+1], &pivot);
-//    return i + 1;
-//}
-//
-//static void qsort_duration(Interval *intervals, Interval *sorted_intervals, int len)
-//{
-//    if(len <= 1)
-//        return;
-//
-//    Interval pivot = sorted_intervals[len/2];
-//    int i = -1;
-//    int j = 0;
-//    while(j < len) {
-//        int duration = sorted_intervals[j].end - sorted_intervals[j].start;
-//        if(duration < pivot.end - pivot.start) {
-//            i++;
-//            Interval buff = sorted_intervals[i];
-//            sorted_intervals[i] = sorted_intervals[j];
-//            sorted_intervals[j] = buff;
-//        }
-//        j++;
-//    }
-//    Interval buff = sorted_intervals[i+1];
-//    sorted_intervals[i+1] = pivot;
-//    pivot = buff;
-//}
+static int compare_duration(const void *a, const void *b)
+{
+    const Interval *interval_a = (const Interval *)a;
+    const Interval *interval_b = (const Interval *)b;
+
+    int duration_a = interval_a->end - interval_a->start;
+    int duration_b = interval_b->end - interval_b->start;
+    return duration_a - duration_b;
+}
+
+static int compare_date(const void *a, const void *b)
+{
+    const Interval *interval_a = (const Interval *)a;
+    const Interval *interval_b = (const Interval *)b;
+
+    if(interval_a->start < interval_b->start)
+        return -1;
+    else if(interval_a->start > interval_b->start)
+        return 1;
+    else
+        return 0;
+}
 
 static void print_date_history_list(
         Interval *intervals,
@@ -495,45 +471,45 @@ static void print_date_history_list(
     mvhline(start_y + visible_rows + 1, start_x, ACS_HLINE, line_length);
 }
 
-//static void print_duration_history_list(
-//        Interval *intervals,
-//        Category *categories,
-//        int category_count,
-//        int interval_count,
-//        int scroll_offset,
-//        int start_y, int start_x,
-//        bool reversed,
-//        int highlight
-//        )
-//{
-//    mvhline(start_y, start_x, ACS_HLINE, line_length);
-//    if(!reversed)
-//        for(int i = 0; i < visible_rows; i++) {
-//            int actual_idx = scroll_offset + i;
-//            if(actual_idx >= interval_count)
-//                break;
-//            print_history_item(&intervals[actual_idx],
-//                    actual_idx,
-//                    categories,
-//                    category_count,
-//                    start_y + i + 1, start_x,
-//                    actual_idx == highlight);
-//        }
-//    else
-//        for(int i = 0; i < visible_rows; i++) {
-//            int actual_idx = scroll_offset - i;
-//            if(actual_idx < 0)
-//                break;
-//            print_history_item(&intervals[actual_idx],
-//                    actual_idx,
-//                    categories,
-//                    category_count,
-//                    start_y + i + 1, start_x,
-//                    actual_idx == highlight);
-//        }
-//    mvhline(start_y + visible_rows + 1, start_x, ACS_HLINE, line_length);
-//}
-//
+static void print_duration_history_list(
+        Interval *intervals,
+        Category *categories,
+        int category_count,
+        int interval_count,
+        int scroll_offset,
+        int start_y, int start_x,
+        bool reversed,
+        int highlight
+        )
+{
+    mvhline(start_y, start_x, ACS_HLINE, line_length);
+    if(!reversed)
+        for(int i = 0; i < visible_rows; i++) {
+            int actual_idx = scroll_offset + i;
+            if(actual_idx >= interval_count)
+                break;
+            print_history_item(&intervals[actual_idx],
+                    actual_idx,
+                    categories,
+                    category_count,
+                    start_y + i + 1, start_x,
+                    actual_idx == highlight);
+        }
+    else
+        for(int i = 0; i < visible_rows; i++) {
+            int actual_idx = scroll_offset - i;
+            if(actual_idx < 0)
+                break;
+            print_history_item(&intervals[actual_idx],
+                    actual_idx,
+                    categories,
+                    category_count,
+                    start_y + i + 1, start_x,
+                    actual_idx == highlight);
+        }
+    mvhline(start_y + visible_rows + 1, start_x, ACS_HLINE, line_length);
+}
+
 static void history_dashboard(Interval *intervals,
         Category *categories, 
         int *interval_count,
@@ -602,7 +578,16 @@ static void history_dashboard(Interval *intervals,
                     highlight);
             break;
         case duration:
-            //print_duration_history_list
+            print_duration_history_list(
+                    intervals,
+                    categories,
+                    category_count,
+                    *interval_count,
+                    scroll_offset,
+                    start_y, start_x,
+                    reversed,
+                    highlight
+                    );
             break;
         }
 
@@ -681,6 +666,14 @@ static void history_dashboard(Interval *intervals,
             break;
         case 's':
             curr_sort = (curr_sort + 1) % sort_max;
+            switch(curr_sort) {
+            case date:
+                qsort(intervals, *interval_count, sizeof(Interval), compare_date);
+                break;
+            case duration:
+                qsort(intervals, *interval_count, sizeof(Interval), compare_duration);
+                break;
+            }
             break;
         case 'r':
             if(!reversed)
