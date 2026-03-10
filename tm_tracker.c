@@ -11,6 +11,7 @@
 #define CATEGORIES_FILE ".categories.dat"
 #define INTERVALS_FILE ".intervals.dat"
 #define FOREST_FILE ".forest.csv"
+#define FOREST_IMPORTED ".forest_imported"
 #define ESC_HINT "<- Esc"
 #define DAY_TITLE "DAY"
 
@@ -27,6 +28,7 @@ enum {
     colors_max = 256,
     bar_gap = 4,
     bar_height = 3,
+    hours_in_day = 24,
     minutes_in_hour = 60,
     seconds_in_minute = 60,
     seconds_in_hour = 3600,
@@ -36,7 +38,6 @@ enum {
     min_time = 300, // in seconds
     forest_values = 13,
     visible_rows = 20, // How many history items fit screen
-    forest_intervals = 400,
     time_buff_len = 5,
     max_time_buff_len = 7,
 
@@ -47,7 +48,7 @@ enum {
     confirm_width = 50,
     active_height = 7,
     active_width = name_max_length + 3,
-    error_height = 3,
+    error_height = 6,
     error_width = 50,
 
     // UI Spacing
@@ -59,7 +60,8 @@ enum {
     time_buff_offset = 4,
     history_title_spacing = 3,
     main_title_spacing = 2,
-    time_focused_spacing = 2
+    time_focused_spacing = 2,
+    error_message_spacing = error_height - 3
 };
 
 enum {
@@ -173,6 +175,7 @@ static bool get_text_input(char *buffer, int max_len) {
         if(ch == key_escape) {
             werase(win);
             wrefresh(win);
+            delwin(win);
             curs_set(0);
             return false;
         }
@@ -221,7 +224,15 @@ static void show_error(char *msg)
     WINDOW *win = newwin(error_height, error_width, y, x);
     box(win, 0, 0);
 
-    mvwaddstr(win, 1, (error_width - strlen(msg)) / 2, msg);
+    char title[] = "ERROR";
+
+    wattron(win, A_BOLD);
+    mvwaddstr(win, 1, (error_width - strlen(title)) / 2, title);
+    wattroff(win, A_BOLD);
+
+    wattron(win, COLOR_PAIR(3));
+    mvwaddstr(win, error_message_spacing, (error_width - strlen(msg)) / 2, msg);
+    wattroff(win, COLOR_PAIR(3));
     wgetch(win);
 
     delwin(win);
@@ -855,16 +866,26 @@ static void pull(void *attr, size_t size, int *count, char *file_name)
     fclose(source);
 }
 
-static void validate_intervals(Interval *intervals, int *count)
+static void validate_intervals(
+        Interval *intervals,
+        int *interval_count,
+        int category_count)
 {
     int valid_count = 0;
-    for(int i = 0; i < *count; i++) {
-        if(intervals[i].category_idx >= 0 && intervals[i].category_idx < *count) {
-            intervals[valid_count] = intervals[i];
-            valid_count++;
-        }
+    for(int i = 0; i < *interval_count; i++) {
+        Interval *iv = &intervals[i];
+        time_t duration = iv->end - iv->start;
+            if(iv->start == 0 && iv->end == 0)
+                continue;
+            if(iv->end < iv->start)
+                continue;
+            if(duration > hours_in_day * seconds_in_hour)
+                continue;
+            if(iv->category_idx >= 0 && iv->category_idx < category_count) {
+                intervals[valid_count++] = intervals[i];
+            }
     }
-    *count = valid_count;
+    *interval_count = valid_count;
 }
 
 static int get_day_total_time(
@@ -1405,9 +1426,6 @@ static void active_screen(Interval *interval,
         int *interval_count,
         int category_count)
 {
-    erase();
-    refresh();
-
     int rows, cols;
     getmaxyx(stdscr, rows, cols);
 
@@ -1422,6 +1440,9 @@ static void active_screen(Interval *interval,
     keypad(win, TRUE);
     
     while(1) {
+        erase();
+        refresh();
+
         box(win, 0, 0); 
         interval->end = time(NULL);
         print_time(win, interval, categories, active_height, active_width, category_count);
@@ -1444,8 +1465,6 @@ static void active_screen(Interval *interval,
                 delwin(win);
                 return;
             }
-            erase();
-            refresh();
         }
     }
 }
@@ -1567,6 +1586,23 @@ static void init_colors()
     }
 }
 
+static bool file_exists(const char *filename)
+{
+    FILE *file = fopen(filename, "r");
+    if(file) {
+        fclose(file);
+        return true;
+    }
+    return false;
+}
+
+static void create_file(const char *filename)
+{
+    FILE *file = fopen(filename, "w");
+    if(file)
+        fclose(file);
+}
+
 int main() {
     initscr();
     cbreak();
@@ -1583,10 +1619,11 @@ int main() {
 
     pull(categories, sizeof(Category), &category_count, CATEGORIES_FILE);
     pull(intervals, sizeof(Interval), &interval_count, INTERVALS_FILE);
-    validate_intervals(intervals, &interval_count);
-    if(interval_count < forest_intervals)
+    validate_intervals(intervals, &interval_count, category_count);
+    if(!file_exists(FOREST_IMPORTED)) {
         parse_forest_data(intervals, categories, &interval_count, &category_count);
-
+        create_file(FOREST_IMPORTED);
+    }
     main_screen(intervals, &interval_count, categories, &category_count);
 
     endwin();
